@@ -22,17 +22,10 @@ class MagnifierTool:
         self.border = int(border)
         self.offset = int(offset)
 
-    def draw(self, painter: QtGui.QPainter, widget_pos: Tuple[int, int], img_pos: Tuple[float, float], cv_image: np.ndarray, widget: Optional[QtGui.QWidget] = None, cross_len: int = 8) -> None:
-        """Draw the magnifier overlay.
-
-        Args:
-            painter: QPainter used for drawing.
-            widget_pos: (wx, wy) mouse coordinates in widget space (ints).
-            img_pos: (cx, cy) coordinates in image space (floats).
-            cv_image: source OpenCV BGR image.
-            widget: optional widget used to clamp overlay inside the widget bounds.
-            cross_len: half-length of the cross to draw inside magnifier.
-        """
+    def draw(self, painter: QtGui.QPainter, widget_pos: Tuple[int, int], img_pos: Tuple[float, float], 
+             cv_image: np.ndarray, widget: Optional[QtGui.QWidget] = None,
+              cross_len: int = 8, cross_color: Optional[QtGui.QColor] = None, cross_width: int = 1) -> None:
+        """Draw the magnifier overlay"""
         if cv_image is None or img_pos is None:
             return
 
@@ -78,8 +71,9 @@ class MagnifierTool:
         painter.drawPixmap(ox, oy, mag_pix)
 
         # dibujar cruceta roja proporcional en el centro
-        pen_cross = QtGui.QPen(QtGui.QColor(220, 0, 0))
-        pen_cross.setWidth(1)
+        final_color = cross_color if cross_color is not None else QtGui.QColor(220, 0, 0)
+        pen_cross = QtGui.QPen(final_color)
+        pen_cross.setWidth(cross_width)
         pen_cross.setCosmetic(True)
         painter.setPen(pen_cross)
         cross_half = max(1, int(round(cross_len * self.zoom)))

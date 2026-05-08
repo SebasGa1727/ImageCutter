@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
-import cv2
 import numpy as np
 from PyQt6 import QtCore, QtGui, QtWidgets
 from ui.components.geometry import ScaledPixmapManager
@@ -23,6 +22,7 @@ class ImageCanvas(QtWidgets.QWidget):
       el último punto. Doble click con el botón izquierdo reinicia la selección.
     """
     fourPointsSelected = QtCore.pyqtSignal(object)
+    
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
@@ -40,14 +40,21 @@ class ImageCanvas(QtWidgets.QWidget):
         self._mouse_in_img: bool = False
         self._mouse_wx: int = 0
         self._mouse_wy: int = 0
-        self.cross_len: int = 8
+        self.cross_len: int = 10
+        self.cross_color = QtGui.QColor(0, 250, 250)
+        self.cross_width: int = 2
         self._cross_cursor = self._create_cross_cursor(self.cross_len)
         # Caché del pixmap escalado está gestionada por `ScaledPixmapManager`
-        # Lupa de enfoque (inicialmente desactivada; toggle con tecla 'A')
+        # valores para la Lupa de enfoque 
+        MAG_SIZE = 250
+        MAG_ZOOM = 1.7
+        MAG_BORDER = 2
+        MAG_OFFSET = 60
         self._magnifier_enabled: bool = False
-        self._magnifier = MagnifierTool()
+        self._magnifier = MagnifierTool(size=MAG_SIZE, zoom=MAG_ZOOM, border=MAG_BORDER, offset=MAG_OFFSET)
         # Modo sniper/precisión
-        self._sniper = SniperModeManager()
+        SNIPER_SENSITIVITY = 0.06
+        self._sniper = SniperModeManager(sensitivity=SNIPER_SENSITIVITY)
 
 
     def _toggle_magnifier(self) -> None:
@@ -81,8 +88,8 @@ class ImageCanvas(QtWidgets.QWidget):
         pix.fill(QtGui.QColor(0, 0, 0, 0))
         painter = QtGui.QPainter(pix)
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-        pen = QtGui.QPen(QtGui.QColor(220, 0, 0))
-        pen.setWidth(1)
+        pen = QtGui.QPen(self.cross_color)
+        pen.setWidth(self.cross_width)
         pen.setCosmetic(True)
         painter.setPen(pen)
         center = size // 2
@@ -287,8 +294,8 @@ class ImageCanvas(QtWidgets.QWidget):
         painter.drawPixmap(left, top, scaled)
         # dibujar crucetas rojas finas (sin numeración)
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-        pen = QtGui.QPen(QtGui.QColor(220, 0, 0))
-        pen.setWidth(1)
+        pen = QtGui.QPen(self.cross_color)
+        pen.setWidth(self.cross_width)
         pen.setCosmetic(True)
         painter.setPen(pen)
         painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
@@ -355,7 +362,16 @@ class ImageCanvas(QtWidgets.QWidget):
                 # pasar posición widget en enteros para el overlay
                 widget_pos = (int(round(wfx)), int(round(wfy)))
                 # delegar dibujo a la herramienta
-                self._magnifier.draw(painter, widget_pos, img_pt, self.cv_image, widget=self, cross_len=self.cross_len)
+                self._magnifier.draw(
+                    painter, 
+                    widget_pos, 
+                    img_pt, 
+                    self.cv_image, 
+                    widget=self, 
+                    cross_len=self.cross_len*2,
+                    cross_color=self.cross_color,
+                    cross_width=self.cross_width,
+                    )
 
         painter.end()
 
