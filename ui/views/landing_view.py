@@ -28,7 +28,7 @@ class LandingView(QtWidgets.QWidget):
         layout.setSpacing(12)
         layout.setContentsMargins(24, 24, 24, 24)
 
-        welcome = QtWidgets.QLabel('Bienvenido a <span style="color: #0E3468;">HICutter</span>')
+        welcome = QtWidgets.QLabel('Bienvenido a <span style="color: #0c8ce9;">HICutter</span>')
         welcome.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         welcome_font = welcome.font()
         welcome_font.setPointSize(27)
@@ -51,7 +51,7 @@ class LandingView(QtWidgets.QWidget):
         btn_batch.setFont(btn_batch_font)
         btn_batch.setMinimumHeight(50)
         btn_batch.setFixedWidth(300)
-        btn_batch.setStyleSheet('background-color: #252525; color: #EDEDED; border: 3px solid #0E3468; border-radius: 6px; padding: 8px;')
+        btn_batch.setStyleSheet('background-color: #1E1E1E; color: #ffffff; border: 3px solid #0c8ce9; border-radius: 6px; padding: 8px;')
         btn_batch.clicked.connect(lambda: self.requestLoadBatch.emit())
 
         btn_image = QtWidgets.QPushButton('Cargar Imagen')
@@ -61,7 +61,7 @@ class LandingView(QtWidgets.QWidget):
         btn_image.setFont(btn_image_font)
         btn_image.setMinimumHeight(50)
         btn_image.setFixedWidth(300)
-        btn_image.setStyleSheet('background-color: #252525; color: #EDEDED; border: 3px solid #0E3468; border-radius: 6px; padding: 8px;')
+        btn_image.setStyleSheet('background-color: #1E1E1E; color: #ffffff; border: 3px solid #0c8ce9; border-radius: 6px; padding: 8px;')
         btn_image.clicked.connect(lambda: self.requestLoadImage.emit())
 
         layout.addStretch(1)

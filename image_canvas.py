@@ -41,7 +41,8 @@ class ImageCanvas(QtWidgets.QWidget):
         self._mouse_wx: int = 0
         self._mouse_wy: int = 0
         self.cross_len: int = 10
-        self.cross_color = QtGui.QColor(0, 250, 250)
+        self.cross_color = QtGui.QColor(12, 140, 233)
+        self.line_color = QtGui.QColor(0, 0, 0)
         self.cross_width: int = 2
         self._cross_cursor = self._create_cross_cursor(self.cross_len)
         # Caché del pixmap escalado está gestionada por `ScaledPixmapManager`
@@ -301,7 +302,7 @@ class ImageCanvas(QtWidgets.QWidget):
         painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
 
         # líneas punteadas de referencia (conectan puntos y con el cursor)
-        dash_pen = QtGui.QPen(QtGui.QColor(0, 0, 0))
+        dash_pen = QtGui.QPen(self.line_color)
         dash_pen.setStyle(QtCore.Qt.PenStyle.DashLine)
         dash_pen.setWidth(1)
         dash_pen.setCosmetic(True)

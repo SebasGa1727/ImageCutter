@@ -234,7 +234,7 @@ def main() -> None:
 	app = QtWidgets.QApplication(sys.argv)
 	mw = MainWindow()
 	mw.resize(1000, 700)
-	mw.show()
+	mw.showMaximized()
 	sys.exit(app.exec())
 
 
