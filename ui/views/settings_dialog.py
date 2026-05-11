@@ -1,3 +1,4 @@
+import os
 from PyQt6 import QtWidgets, QtCore
 from utils.fmt_config import config_manager
 from utils.logger import setup_logger
@@ -86,7 +87,7 @@ class SettingsDialog(QtWidgets.QDialog):
 
     def _abrir_explorador(self):
         '''Abre el explorador de Windows y guarda la selección en el QLineEdit'''
-        last_dir = config_manager.get("paths", "last_dir")
+        last_dir = config_manager.get("paths", "last_dir") or os.path.expanduser("~")
 
         carpeta_seleccionada = QtWidgets.QFileDialog.getExistingDirectory(self, "Seleccionar carpeta", last_dir)
 

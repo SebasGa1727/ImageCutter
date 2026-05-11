@@ -10,11 +10,11 @@ class BatchSetupDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Configuracion procesamiento por lotes")
-        self.setMinimumSize(650, 700)
+        self.setMinimumSize(550, 550)
         self.setModal(True)
         
-        self.input_directory = "" # Aquí guardaremos la ruta de ENTRADA seleccionada
-        self.output_directory = "" # Aquí guardaremos la ruta de SALIDA seleccionada
+        self.input_directory = config_manager.get("paths", "input_last_dir") # Aquí guardaremos la ruta de ENTRADA seleccionada
+        self.output_directory = config_manager.get("paths", "pre_set_output_dir") # Aquí guardaremos la ruta de SALIDA seleccionada
 
         self._setup_ui()
         self._load_summary_data()
@@ -23,14 +23,15 @@ class BatchSetupDialog(QtWidgets.QDialog):
         main_layout = QtWidgets.QVBoxLayout(self)
         main_layout.setSpacing(15)
 
-        # ==========================================
         # 1. CARPETA DE ENTRADA
-        # ==========================================
         group_input = QtWidgets.QGroupBox("Carpeta de entrada")
         layout_input = QtWidgets.QHBoxLayout(group_input)
         
         self.txt_input_dir = QtWidgets.QLineEdit()
-        self.txt_input_dir.setPlaceholderText("Ruta/Seleccionada")
+        if self.input_directory == "":
+            self.txt_input_dir.setPlaceholderText("Selecciona una carpeta de entrada")
+        else:
+            self.txt_input_dir.setPlaceholderText(self.input_directory)
         self.txt_input_dir.setReadOnly(True)
         
         btn_browse_input = QtWidgets.QPushButton("...")
@@ -84,9 +85,7 @@ class BatchSetupDialog(QtWidgets.QDialog):
         middle_layout.addWidget(group_th)
         main_layout.addLayout(middle_layout)
 
-        # ==========================================
         # 3. FORMATO PDF
-        # ==========================================
         group_pdf = QtWidgets.QGroupBox("Formato PDF")
         layout_pdf = QtWidgets.QVBoxLayout(group_pdf)
         
@@ -95,10 +94,13 @@ class BatchSetupDialog(QtWidgets.QDialog):
             "DPI": QtWidgets.QLabel(),
             "Calidad": QtWidgets.QLabel()
         }
-        # Para el PDF usamos un grid horizontal para que se vea como en tu diseño
+        layout_pdf.addLayout(self._create_summary_form({"Estado": self.lbls_pdf["Estado"]}))
+
+        # Para el PDF usamos un grid horizontal
         pdf_form_layout = QtWidgets.QHBoxLayout()
-        pdf_form_layout.addLayout(self._create_summary_form({"Estado": self.lbls_pdf["Estado"], "DPI": self.lbls_pdf["DPI"]}))
+        pdf_form_layout.addLayout(self._create_summary_form({"DPI": self.lbls_pdf["DPI"]}))
         pdf_form_layout.addLayout(self._create_summary_form({"Calidad": self.lbls_pdf["Calidad"]}))
+        
         layout_pdf.addLayout(pdf_form_layout)
 
         btn_mod_pdf = QtWidgets.QPushButton("Modificar")
@@ -114,6 +116,10 @@ class BatchSetupDialog(QtWidgets.QDialog):
         layout_output = QtWidgets.QHBoxLayout(group_output)
         
         self.txt_output_dir = QtWidgets.QLineEdit()
+        if not self.output_directory:
+            self.txt_output_dir.setPlaceholderText("Selecciona una carpeta de salida")
+        else:
+            self.txt_output_dir.setPlaceholderText(self.output_directory)
         self.txt_output_dir.setReadOnly(True)
         
         btn_mod_out = QtWidgets.QPushButton("Modificar")
@@ -162,9 +168,10 @@ class BatchSetupDialog(QtWidgets.QDialog):
 
     def _select_input_directory(self):
         """Abre el explorador para elegir la carpeta donde están las fotos a procesar"""
-        last_dir = config_manager.get("paths", "last_dir") or os.path.expanduser("~")
+        last_dir = config_manager.get("paths", "input_last_dir") or os.path.expanduser("~")
         folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Seleccionar Carpeta de Entrada", last_dir)
         if folder:
+            config_manager.set("paths", "input_last_dir", folder)
             self.input_directory = folder
             self.txt_input_dir.setText(folder)
 
@@ -210,7 +217,11 @@ class BatchSetupDialog(QtWidgets.QDialog):
         if use_preset and preset_dir:
             self.txt_output_dir.setText(preset_dir)
             self.output_directory = preset_dir
-            config_manager.set("paths","last_dir", preset_dir)
+            config_manager.set("paths", "last_dir", preset_dir)
+        elif preset_dir: # Evalúa a True SOLO si el string tiene texto (no está vacío)
+            self.txt_output_dir.setText(preset_dir)
+            self.output_directory = preset_dir
+            config_manager.set("paths", "last_dir", preset_dir)
         else:
             self.txt_output_dir.setText(last_dir)
             self.output_directory = last_dir
@@ -218,12 +229,13 @@ class BatchSetupDialog(QtWidgets.QDialog):
     def _validate_and_start(self):
         """Valida que haya una carpeta de entrada y una de salida antes de iniciar el lote"""
         if not self.input_directory:
-            QtWidgets.QMessageBox.warning(self, "Atención", "Debes seleccionar una carpeta de entrada.")
+            QtWidgets.QMessageBox.warning(self, "Atención", 'Debes seleccionar una carpeta de entrada.\n' \
+            'Presiona "Modificar" en la seccion "carpeta de salida" para seleccionar tu carpeta de salida')
             return
         
-        if not self.output_directory or self.output_directory == "":
+        if not self.output_directory:
             QtWidgets.QMessageBox.warning(self, "Atención", 'Debes seleccionar una carpeta de salida.\n' \
-            'Presiona "Modoficar" en la seccion "carpeta de salida" para seleccionar tu carpeta de salida')
+            'Presiona "Modificar" en la seccion "carpeta de salida" para seleccionar tu carpeta de salida')
             return
         # Si todo está bien, cerramos el diálogo devolviendo "Aceptado"
         self.accept()

@@ -37,7 +37,8 @@ class UserConfigManager:
         "paths":{
             "use_preset_dir": False,
             "pre_set_output_dir": "",
-            "last_dir": ""
+            "last_dir": "",
+            "input_last_dir": ""
         }
        
     }
