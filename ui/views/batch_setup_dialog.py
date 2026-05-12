@@ -218,7 +218,7 @@ class BatchSetupDialog(QtWidgets.QDialog):
             self.txt_output_dir.setText(preset_dir)
             self.output_directory = preset_dir
             config_manager.set("paths", "last_dir", preset_dir)
-        elif preset_dir: # Evalúa a True SOLO si el string tiene texto (no está vacío)
+        elif preset_dir: 
             self.txt_output_dir.setText(preset_dir)
             self.output_directory = preset_dir
             config_manager.set("paths", "last_dir", preset_dir)
@@ -230,7 +230,7 @@ class BatchSetupDialog(QtWidgets.QDialog):
         """Valida que haya una carpeta de entrada y una de salida antes de iniciar el lote"""
         if not self.input_directory:
             QtWidgets.QMessageBox.warning(self, "Atención", 'Debes seleccionar una carpeta de entrada.\n' \
-            'Presiona "Modificar" en la seccion "carpeta de salida" para seleccionar tu carpeta de salida')
+            'Presiona "Modificar" en la seccion "carpeta de entrada" para seleccionar tu carpeta de entrada')
             return
         
         if not self.output_directory:
@@ -241,5 +241,5 @@ class BatchSetupDialog(QtWidgets.QDialog):
         self.accept()
             
     def get_directories(self) -> tuple[str, str]:
-        """Método público para que main.py pueda obtener la ruta seleccionada"""
+        """Método público para que main.py pueda obtener las rutas seleccionadas"""
         return self.input_directory, self.output_directory
