@@ -12,22 +12,33 @@ class UserConfigManager:
 
     #Creamos una configuracion default por si el usuario no los configura
     DEFAULT_CONFIG = {
-        "export_rd":{
+        "export_image":{
             "format": "jpg",
             "quality": 80,
             "dpi": 96,
             "longest_edge": 3000,
-            "output_dir": "RD"
+            "output_dir": "Recortadas"
         },
         "export_th":{
+            "enabled": False,
             "format": "jpg",
             "quality": 60,
             "dpi": 72,
             "shortest_edge": 500,
-            "output_dir": "TH"
+        },
+        "export_pdf":{
+            "enabled": False,
+            "dpi": 150,
+            "quality": 75
+        },
+        "ai_export":{
+            "yolo_Enabled": False
         },
         "paths":{
-            "base_output_dir": ""
+            "use_preset_dir": False,
+            "pre_set_output_dir": "",
+            "last_dir": "",
+            "input_last_dir": ""
         }
        
     }

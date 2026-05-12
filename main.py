@@ -8,7 +8,7 @@ from core.processor import process_perspective_crop, rotate_image
 from image_canvas import ImageCanvas
 from ui.views.landing_view import LandingView
 from utils.logger import setup_logger
-from core.output_fmt import export_rd, export_th
+from core.output_fmt import export_image, export_th
 from utils.fmt_config import config_manager
 from ui.components.editor_toolbar import EditorToolbar
 
@@ -37,6 +37,7 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.toolbar.sig_rotate_right_requested.connect(lambda: self._apply_rotation("derecha"))
 		self.toolbar.sig_rotate_left_requested.connect(lambda: self._apply_rotation("izquierda"))
 		self.toolbar.sig_rotate_180_requested.connect(lambda: self._apply_rotation("180"))
+		self.toolbar.sig_cancel_requested.connect(self.cancel_operation)
 
 		# Atajos globales
 		self.shortcut_return = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key.Key_Return), self)
@@ -50,9 +51,13 @@ class MainWindow(QtWidgets.QMainWindow):
 		try:
 			self.landing.requestLoadImage.connect(self._handle_request_load_image)
 		except Exception:
-			# Si LandingView no tiene la señal, seguir sin error
-			logger.error("No se conecto LandingView",exc_info=True)
+			logger.error("No se conecto el procesamiento de imagen individual",exc_info=True)
 
+		# Conectar la señal de la configuracion del procesamiento por lotes
+		try:
+			self.landing.requestLoadBatch.connect(self._start_batch_workflow)
+		except Exception:
+			logger.error("No se conecto batch_setup_dialog", exc_info=True)
 
 		# Actualizar estado del toolbar cuando cambia la vista
 		self.stack.currentChanged.connect(lambda idx: self.update_toolbar_state(idx == 1))
@@ -94,6 +99,13 @@ class MainWindow(QtWidgets.QMainWindow):
 		# Wrapper that accepts optional path from LandingView signal
 		path = args[0] if args else None
 		self.load_image(path)
+
+	def _start_batch_workflow(self):
+		from ui.views.batch_setup_dialog import BatchSetupDialog
+		dialog = BatchSetupDialog(self)
+		if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+			carpeta_entrada, carpeta_salida = dialog.get_directories()
+			print(f"Lote iniciado: carpeta a procesar: {carpeta_entrada}\nCarpeta salida: {carpeta_salida}")
 
 	def _apply_rotation(self, direction_rotate: str) -> None:
 		"""Se aplica la rotacion (via processor.rotate_image) y recarga la imagen via canvas"""
@@ -143,17 +155,29 @@ class MainWindow(QtWidgets.QMainWindow):
 			return
 
 		'''Incluimos metodo de guardado a travez de "core/output_fmt.py"'''
-		#Leemos la ultima linea de directorio para comodidad del usuario 
-		last_dir = config_manager.get("paths", "base_output_dir") or os.path.expanduser("~")
-		
-		folder_path = QtWidgets.QFileDialog.getExistingDirectory(self, "Seleccionar carpeta para guardar recortes (RD y TH)", last_dir)
+		#Configuramos la ruta de salida dependiendo preferencias de usuario
+		try:
+			use_preset_dir = config_manager.get("paths","use_preset_dir")
+			pre_set_output_dir = config_manager.get("paths", "pre_set_output_dir")
+			last_dir = config_manager.get("paths", "last_dir")
 
-		#por si el usuario presiona "cancelar"
-		if not folder_path:
-			return
-		
-		# Guardamos el folder seleccionado por el usuario
-		config_manager.set("paths", "base_output_dir", folder_path)
+			if use_preset_dir and pre_set_output_dir:
+				folder_path = pre_set_output_dir
+			
+			elif pre_set_output_dir:
+				folder_path = QtWidgets.QFileDialog.getExistingDirectory(self, "Seleccionar carpeta para guardar recortes", pre_set_output_dir)
+				#Por si el usuario presiona "cancelar" 
+				if not folder_path:
+					return
+			else:
+				folder_path = QtWidgets.QFileDialog.getExistingDirectory(self, "Seleccionar carpeta para guardar recortes", pre_set_output_dir or last_dir)
+				if not folder_path:
+					return
+			
+			config_manager.set("paths", "last_dir", folder_path)
+		except Exception:
+			logger.error("Error al configurar ruta de exportacion",exc_info=True)
+			QtWidgets.QMessageBox.warning(self, "Error", "No se pudo configurar la ruta de exportacion\n Vuelva a intentar o reinicie la aplicacion")
 
 		# Obtenemos el nombre del archivo
 		base_name = "crop_temp.jpg"
@@ -162,13 +186,21 @@ class MainWindow(QtWidgets.QMainWindow):
 		
 		# Delegamos la exportacion a core/output_fmt.py
 		try:
-			export_rd(warped, base_name)
-			export_th(warped, base_name)
+			export_image(warped, base_name)
 
 		except Exception as e:
-			logger.error("Error al Exportar formatos RD o TH", exc_info=True)
-			QtWidgets.QMessageBox.warning(self, "Error", "No se pudo exportar la imagen (revise logs)")
+			logger.error("Error al Exportar imagen recortada", exc_info=True)
+			QtWidgets.QMessageBox.warning(self, "Error", "No se pudo exportar la imagen recortada (revise logs)")
 		
+		try:
+			export_th_is_enabled = config_manager.get("export_th", "enabled")
+			if export_th_is_enabled:
+				export_th(warped, base_name)
+				
+		except Exception:
+			logger.error("Error al Exportar formato TH", exc_info=True)
+			QtWidgets.QMessageBox.warning(self, "Error", "No se pudo exportar la imagen para formato TH (revise logs)")
+
 		try:
 			self.canvas.unload_image()
 			self.current_image_path = None
@@ -177,14 +209,43 @@ class MainWindow(QtWidgets.QMainWindow):
 		except Exception as e:
 			logger.error("Error al regresar a la pagina de inicio", exc_info=True)
 			QtWidgets.QMessageBox.warning(self, "Error", "No se pudo cargar la pagina de inicio, reinicie la aplicacion")
-		
+	
+	def cancel_operation (self) -> None:
+		'''Aborto seguro del procesamiento
+		Confirma la operacion de aborto al usuario'''
+
+		answer = QtWidgets.QMessageBox.question(
+			self,
+			"Confirmar cancelacion",
+			"¿Estas seguro de cancelar el proceso actual y regresar a la pagina de inicio?\n" \
+			"Nota: En procesamiento por lote, esta accion solo afecta a la imagen actual.\n" \
+			"Las imagenes previas no se veran afectadas.",
+			QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No, 
+			QtWidgets.QMessageBox.StandardButton.No #<- Eleccion por defecto en caso de que se presione "enter"
+		)
+		if answer == QtWidgets.QMessageBox.StandardButton.No:
+			return
+		#Ejecutamos el codigo para limpiar el lienzo de forma correcta
+		try:
+			# Borramos la imagen de la memoria del Canvas
+			self.canvas.unload_image()
+			# Destruimos la referencia a la ruta original
+			self.current_image_path = None
+			# Cambiamos la vista a la pantalla Landing (índice 0)
+			self.stack.setCurrentIndex(0)
+
+			logger.info("Proceso cancelado por el usuario y redirijido a la paginia principal correctamente")
+		except Exception:
+			logger.error("Error al critico al intentar cancelar la operacion", exc_info=True)
+			QtWidgets.QMessageBox.warning(self, "Error", "Error al limpiar la memoria, intente nuevamente")
+
 
 
 def main() -> None:
 	app = QtWidgets.QApplication(sys.argv)
 	mw = MainWindow()
 	mw.resize(1000, 700)
-	mw.show()
+	mw.showMaximized()
 	sys.exit(app.exec())
 
 

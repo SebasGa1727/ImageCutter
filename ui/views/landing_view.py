@@ -3,6 +3,10 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt6 import QtCore, QtGui, QtWidgets
+from utils.logger import setup_logger
+from ui.views.settings_dialog import SettingsDialog
+
+logger = setup_logger(__name__)
 
 
 class LandingView(QtWidgets.QWidget):
@@ -24,7 +28,7 @@ class LandingView(QtWidgets.QWidget):
         layout.setSpacing(12)
         layout.setContentsMargins(24, 24, 24, 24)
 
-        welcome = QtWidgets.QLabel('Bienvenido a <span style="color: #0E3468;">HICutter</span>')
+        welcome = QtWidgets.QLabel('Bienvenido a <span style="color: #0c8ce9;">HICutter</span>')
         welcome.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         welcome_font = welcome.font()
         welcome_font.setPointSize(27)
@@ -47,7 +51,7 @@ class LandingView(QtWidgets.QWidget):
         btn_batch.setFont(btn_batch_font)
         btn_batch.setMinimumHeight(50)
         btn_batch.setFixedWidth(300)
-        btn_batch.setStyleSheet('background-color: #252525; color: #EDEDED; border: 3px solid #0E3468; border-radius: 6px; padding: 8px;')
+        btn_batch.setStyleSheet('background-color: #1E1E1E; color: #ffffff; border: 3px solid #0c8ce9; border-radius: 6px; padding: 8px;')
         btn_batch.clicked.connect(lambda: self.requestLoadBatch.emit())
 
         btn_image = QtWidgets.QPushButton('Cargar Imagen')
@@ -57,7 +61,7 @@ class LandingView(QtWidgets.QWidget):
         btn_image.setFont(btn_image_font)
         btn_image.setMinimumHeight(50)
         btn_image.setFixedWidth(300)
-        btn_image.setStyleSheet('background-color: #252525; color: #EDEDED; border: 3px solid #0E3468; border-radius: 6px; padding: 8px;')
+        btn_image.setStyleSheet('background-color: #1E1E1E; color: #ffffff; border: 3px solid #0c8ce9; border-radius: 6px; padding: 8px;')
         btn_image.clicked.connect(lambda: self.requestLoadImage.emit())
 
         layout.addStretch(1)
@@ -68,3 +72,41 @@ class LandingView(QtWidgets.QWidget):
         layout.addWidget(btn_image, alignment=QtCore.Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(btn_batch, alignment=QtCore.Qt.AlignmentFlag.AlignHCenter)
         layout.addStretch(1)
+
+        #Agregamos el boton de configuracion de formato
+        self.btn_settings = QtWidgets.QToolButton(self)
+        self.btn_settings.setText("⚙️")
+        self.btn_settings.setToolTip("Configuracion de Exportacion y PDF")
+
+        #Diseño CSS
+        self.btn_settings.setStyleSheet('''
+            QToolButton {
+                background: transparent;
+                border: none;
+                font-size: 20pt;
+            }
+            QToolButton:hover {
+                background-color: rgba(37, 37, 37, 0.06);
+                border-radius: 6px;
+            }
+        ''')
+
+        self.btn_settings.clicked.connect(self._open_settings)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        """
+        Sobrescribimos el evento de redimensionamiento nativo.
+        Esto ancla el botón a la coordenada x=24, y=24 (respetando tus márgenes)
+        sin importar de qué tamaño haga la ventana el usuario.
+        """
+        super().resizeEvent(event)
+        self.btn_settings.move(1, 24)
+
+    def _open_settings(self) -> None:
+        """Instancia y ejecuta la ventana de configuración."""
+        try:
+            # Usamos self.window() para que herede de MainWindow, centrando el modal a la perfección
+            dialog = SettingsDialog(self.window())
+            dialog.exec()
+        except Exception:
+            logger.error("Error al intentar abrir el panel de configuracion", exc_info=True)

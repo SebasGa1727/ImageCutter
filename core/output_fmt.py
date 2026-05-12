@@ -50,16 +50,16 @@ def _cv2_to_pil(cv_img: np.ndarray) -> Image.Image:
     
     return Image.fromarray(rgb_img)
 
-def export_rd(cv_image: np.ndarray, base_filename: str) -> str:
-    """Exporta la imagen en formato RD, según la configuración."""
+def export_image(cv_image: np.ndarray, base_filename: str) -> str:
+    """Exporta la imagen recortada según la configuración."""
     try:
         #Leemos la configuracion de nuestro archivo
-        fmt = str(config_manager.get("export_rd", "format"))
-        quality = config_manager.get("export_rd", "quality")
-        dpi = config_manager.get("export_rd", "dpi")
-        target_size = config_manager.get("export_rd", "longest_edge")
-        base_dir = config_manager.get("paths", "base_output_dir")
-        sub_folder = config_manager.get("export_rd", "output_dir")
+        fmt = str(config_manager.get("export_image", "format"))
+        quality = config_manager.get("export_image", "quality")
+        dpi = config_manager.get("export_image", "dpi")
+        target_size = config_manager.get("export_image", "longest_edge")
+        base_dir = config_manager.get("paths", "last_dir")
+        sub_folder = config_manager.get("export_image", "output_dir")
 
         if not base_dir:
             base_dir = os.path.join(os.path.expanduser("~"), "Documents", "HICutter_Exports")
@@ -78,7 +78,7 @@ def export_rd(cv_image: np.ndarray, base_filename: str) -> str:
         if orig_w > target_size or orig_h > target_size:
             pil_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
         else:
-            logger.warning(f"Archivo no reescalado, la imagen es mas pequeña que el 'target_size' (RD):{base_filename}")
+            logger.warning(f"Archivo no reescalado, la imagen es mas pequeña que el 'target_size':{base_filename}")
 
         # Construimos la salida
         name, _ = os.path.splitext(os.path.basename(base_filename))
@@ -92,12 +92,12 @@ def export_rd(cv_image: np.ndarray, base_filename: str) -> str:
         # Guardamos inyectando los metadatos (DPI y Calidad)
         pil_img.save(out_path, format=pil_format, quality=quality, dpi=(dpi, dpi))
 
-        logger.info(f"RD Exportado con exito: {out_path} ({new_w} x {new_h} a {dpi} DPI)")
+        logger.info(f"Imagen exportada con exito: {out_path} ({new_w} x {new_h} a {dpi} DPI)")
 
         return out_path
     
     except Exception as e:
-        logger.error(f"Error critico al intentar exportar RD: {base_filename}", exc_info=True)
+        logger.error(f"Error critico al intentar exportar imagen recortada: {base_filename}", exc_info=True)
         raise e
     
 def export_th(cv_image: np.ndarray, base_filename: str) -> str:
@@ -108,14 +108,12 @@ def export_th(cv_image: np.ndarray, base_filename: str) -> str:
         quality = config_manager.get("export_th", "quality")
         dpi = config_manager.get("export_th", "dpi")
         target_size = config_manager.get("export_th", "shortest_edge")
-        base_dir = config_manager.get("paths", "base_output_dir")
-        sub_folder = config_manager.get("export_th", "output_dir")
+        base_dir = config_manager.get("paths", "last_dir")
 
         if not base_dir:
             base_dir = os.path.join(os.path.expanduser("~"), "Documents", "HICutter_Exports")
         
-        out_dir = os.path.join(base_dir, sub_folder)
-        os.makedirs(out_dir, exist_ok=True)
+        os.makedirs(base_dir, exist_ok=True)
 
         # Convertimos a pillow y calculamos el tamaño
         pil_img = _cv2_to_pil(cv_image)
@@ -132,7 +130,7 @@ def export_th(cv_image: np.ndarray, base_filename: str) -> str:
 
         # Construimos la salida
         name, _ = os.path.splitext(os.path.basename(base_filename))
-        out_path = os.path.join(out_dir, f"{name}.{fmt}")
+        out_path = os.path.join(base_dir, f"{name}_TH.{fmt}")
         
         #Guardamos variable "JPEG" para que pillow no crashee
         pil_format = fmt.upper()

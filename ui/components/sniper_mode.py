@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
-from PyQt6 import QtCore, QtGui
+from PyQt6 import QtCore, QtGui, QtWidgets
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -24,20 +24,25 @@ class SniperModeManager:
         self.sensitivity: float = float(sensitivity)
         self._last_physical_pos = QtCore.QPoint()
 
-    def handle_key_press(self, event: QtGui.QKeyEvent, widget: QtGui.QWidget) -> tuple[bool, Optional[int], Optional[int]]:
-        """Handle key press to enter sniper/precision mode.
-
-        Returns a tuple (handled, mouse_wx, mouse_wy). When handled==True the
-        returned widget coordinates should be applied by the caller (ImageCanvas).
-        """
+    def handle_key_press(self, event: QtGui.QKeyEvent, widget: QtWidgets.QWidget) -> tuple[bool, Optional[int], Optional[int]]:
+        """Maneja la activacion de la tecla para activar el modo sniper"""
         key = event.key()
         if key == QtCore.Qt.Key.Key_Shift and not event.isAutoRepeat():
             if not self.active:
+                # Guardamos donde estaba la cruceta visualmente en el canvas
                 gpos = QtGui.QCursor.pos()
                 wpos = widget.mapFromGlobal(gpos)
                 self.virtual_cursor_pos = QtCore.QPointF(float(wpos.x()), float(wpos.y()))
                 self.saved_cursor = widget.cursor()
-                self._last_physical_pos = gpos #<- Guardamos la posicion fisica inicial en lugar de recentrar
+                
+                # Encontramos el centro del widget de la pantalla
+                rect_center = widget.rect().center()
+                center_global = widget.mapToGlobal(rect_center)
+
+                # Movemos el mouse al centro para aumentar el lienzo disponible en "sniper mode"
+                QtGui.QCursor.setPos(center_global)
+
+                self._last_physical_pos = center_global
 
                 try:
                     widget.setCursor(QtCore.Qt.CursorShape.BlankCursor)
@@ -50,7 +55,7 @@ class SniperModeManager:
                 return True, mouse_wx, mouse_wy
         return False, None, None
 
-    def handle_key_release(self, event: QtGui.QKeyEvent, widget: QtGui.QWidget) -> bool:
+    def handle_key_release(self, event: QtGui.QKeyEvent, widget: QtWidgets.QWidget) -> bool:
         try:
             key = event.key()
             if key == QtCore.Qt.Key.Key_Shift and not event.isAutoRepeat():
@@ -75,7 +80,7 @@ class SniperModeManager:
             logger.error("Fallo al registrar el evento",exc_info=True)
         return False
 
-    def handle_mouse_move(self, event: QtGui.QMouseEvent, widget: QtGui.QWidget) -> Tuple[bool, Optional[int], Optional[int], Optional[bool]]:
+    def handle_mouse_move(self, event: QtGui.QMouseEvent, widget: QtWidgets.QWidget) -> Tuple[bool, Optional[int], Optional[int], Optional[bool]]:
         """Procesa el movimiento del raton cuando esta activo el modo sniper.
         Retorna: (handled, mouse_wx, mouse_wy, mouse_in_img).
         """
@@ -117,7 +122,7 @@ class SniperModeManager:
 
         return True, mouse_wx, mouse_wy, mouse_in_img
 
-    def get_current_widget_pos(self, event: Optional[QtGui.QMouseEvent], widget: QtGui.QWidget) -> Tuple[float, float]:
+    def get_current_widget_pos(self, event: Optional[QtGui.QMouseEvent], widget: QtWidgets.QWidget) -> Tuple[float, float]:
         """Return the widget coords (float) that should be used for mapping to image.
 
         If sniper is active returns the virtual cursor position, otherwise returns
