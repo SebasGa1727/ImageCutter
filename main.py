@@ -1,10 +1,12 @@
-from PyQt6 import QtWidgets, QtGui, QtCore
 import sys
 import cv2
 import numpy as np
 import os
-from core.processor import process_perspective_crop, rotate_image
+from PyQt6 import QtWidgets, QtGui, QtCore
+from PyQt6.QtCore import QThreadPool
 
+from core.batch_engine import BatchManager, BatchWorker
+from core.processor import process_perspective_crop, rotate_image
 from image_canvas import ImageCanvas
 from ui.views.landing_view import LandingView
 from utils.logger import setup_logger
@@ -27,6 +29,14 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.stack.addWidget(self.canvas)
 		self.setCentralWidget(self.stack)
 		self.current_image_path: str | None = None
+
+		#Procesamiento por lote implementado desde Batch_engine
+		self.is_batch_mode: bool = False
+		self.batch_manager = BatchManager()
+		self.thread_pool = QThreadPool()
+		self.batch_manager.batch_finished.connect(self._on_batch_finished)
+		logger.info(f"Multithreading list: {self.thread_pool.maxThreadCount()} hilos maximos")
+
 
 		# Toolbar implementado desde "editor_toolbar.py"
 		self.toolbar = EditorToolbar(self)
@@ -93,19 +103,15 @@ class MainWindow(QtWidgets.QMainWindow):
 		# Ejecuta save_points si hay 4 puntos seleccionados
 		pts = self.canvas.get_points()
 		if pts.shape[0] == 4:
-			self.save_points()
+			if self.is_batch_mode:
+				self._process_batch_image() #<- Ejecutamos guardado de forma asincrona (lotes)
+			else:
+				self.save_points()#<- Ejecutamos guardado de forma sincrona (1 imagen)
 
 	def _handle_request_load_image(self, *args) -> None:
 		# Wrapper that accepts optional path from LandingView signal
 		path = args[0] if args else None
 		self.load_image(path)
-
-	def _start_batch_workflow(self):
-		from ui.views.batch_setup_dialog import BatchSetupDialog
-		dialog = BatchSetupDialog(self)
-		if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-			carpeta_entrada, carpeta_salida = dialog.get_directories()
-			print(f"Lote iniciado: carpeta a procesar: {carpeta_entrada}\nCarpeta salida: {carpeta_salida}")
 
 	def _apply_rotation(self, direction_rotate: str) -> None:
 		"""Se aplica la rotacion (via processor.rotate_image) y recarga la imagen via canvas"""
@@ -131,6 +137,83 @@ class MainWindow(QtWidgets.QMainWindow):
 		except Exception:
 			logger.warning("LA funcionalidad de 'Shortcuts' no fue activada/ desactivada correctamente", exc_info=True)
 
+	def _start_batch_workflow(self):
+		from ui.views.batch_setup_dialog import BatchSetupDialog
+		dialog = BatchSetupDialog(self)
+		if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+			carpeta_entrada, carpeta_salida = dialog.get_directories()
+			
+			# Le damos la carpeta al administrador de carpetas
+			if self.batch_manager.load_directory(carpeta_entrada):
+				self.is_batch_mode = True
+				logger.info(f"Lote iniciado: {len(self.batch_manager.image_files)} fotos en cola")
+				#Cargamos la primera foto
+				self._load_next_batch_image()
+			else:
+				self.is_batch_mode = False
+				QtWidgets.QMessageBox.warning(self, "Error", "No se encontraron imagenes validas en la carpeta de entrada")
+				self._start_batch_workflow()
+
+	def _load_next_batch_image(self):
+		"""Pide la siguiente imagen al manager y la carga en el canvas"""
+		next_path =self.batch_manager.get_next_image()
+
+		if next_path:
+			img = cv2.imread(next_path)
+			if img is not None:
+				self.current_image_path = next_path
+				#Le pasamos la info al HUD
+				nombre_archivo = os.path.basename(next_path)
+				progreso = f"[{self.batch_manager.current_index}/{len(self.batch_manager.image_files)}]"
+				self.canvas.set_hud_info(nombre_archivo, progreso)
+				self.canvas.load_image(cv_image=img)
+				self.stack.setCurrentIndex(1)
+			else:
+				logger.error(f"imagen corrupt: {next_path}", exc_info=True)
+				self.batch_manager.record_error(next_path, "No se pudo leer el archivo con OpenCV")
+				self._load_next_batch_image()
+		else:
+			#Si next_path es None, significa que la cola esta vacia
+			#Esperamos a que los hilos terminen anuncioando con un mensaje al usuario
+			# Mostramos un Pop-Up Indeterminado que NO tiene botón de cancelar ni de OK.
+			self.wait_dialog = QtWidgets.QProgressDialog("Guardando las últimas imágenes...", None, 0, 0, self)
+			self.wait_dialog.setWindowTitle("Procesando")
+			self.wait_dialog.setWindowModality(QtCore.Qt.WindowModality.WindowModal) # Bloquea la ventana detrás
+			self.wait_dialog.setCancelButton(None) # Le quitamos el botón cancelar
+			self.wait_dialog.show()
+
+	def _process_batch_image(self):
+		'''Procesa el trabajo de guardado de forma asincrona'''
+		if self.canvas.cv_image is None or self.current_image_path is None:
+			logger.warning("Error de procesamiento de guardado en canvas o image_path", exc_info=True)
+			return
+
+		pts = self.canvas.get_points().astype(np.float32)
+		cv_img_copy = self.canvas.cv_image.copy() #<-Copia de seguridad
+		file_path = self.current_image_path
+		#Creamos al obrero
+		worker = BatchWorker(cv_img_copy, pts, file_path)
+		#Conectamos las señales
+		worker.signals.finished.connect(self.batch_manager.record_success)
+		worker.signals.error.connect(self.batch_manager.record_error)
+		#Lo mandamos a un hilo aparte
+		self.thread_pool.start(worker)
+		#Cargamos la siguiente imagen
+		self._load_next_batch_image()
+
+	def _on_batch_finished(self, success_list: list, error_list: list):
+		'''Se ejecuta cuando el ultimo obrero termina de guardar'''
+		#Cerramos el cuadro de dialogo de carga del "_load_next_batch_image"
+		if hasattr(self, 'wait_dialog') and self.wait_dialog:
+			self.wait_dialog.close()
+		#Limpiamos el canvas de la imagen y el HUD
+		self.canvas.set_hud_info("","")
+		self.canvas.unload_image()
+		#Limpiamos variables de estado
+		self.current_image_path = None
+		self.is_batch_mode = False
+		'''Aqui cambiara el index a otra pestaña para mostrar el resumen, pero de momento regresa al menu inicial'''
+		self.stack.setCurrentIndex(0)
 
 	def save_points(self) -> None:
 		"""Guarda la imagen procesada preguntando primero el destino.

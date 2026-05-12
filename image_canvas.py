@@ -30,6 +30,12 @@ class ImageCanvas(QtWidgets.QWidget):
 
         self.cv_image: Optional[np.ndarray] = None
         self._pixmap: Optional[QtGui.QPixmap] = None
+
+        # Variables del HUD
+        self.hud_filename: str = ""
+        self.hud_progress: str = ""
+        self.hud_colorspace: str = ""
+
         # helpers
         self._scaled_manager = ScaledPixmapManager()
         self._point_manager = PointManager()
@@ -62,6 +68,11 @@ class ImageCanvas(QtWidgets.QWidget):
         self._magnifier_enabled = not self._magnifier_enabled
         self.update()
 
+    def set_hud_info(self, filename: str, progress: str) -> None:
+        '''Actualiza la informacion del archivo actual para mostrarla en el HUD'''
+        self.hud_filename = filename
+        self.hud_progress = progress
+
     # ---------- Carga y conversión
     def load_image(self, path: Optional[str] = None, cv_image: Optional[np.ndarray] = None) -> None:
         """Recibe una matriz de OpenCV (BGR) y la prepara para renderizado visual.
@@ -71,6 +82,15 @@ class ImageCanvas(QtWidgets.QWidget):
             raise ValueError("Se recibio un cv_image vacio o nulo")
         # Copiamos la matriz para evitar que modificaciones externas dañen la vista
         self.cv_image = cv_image.copy()
+        #Agregamos los valores del espacio de color de la imagen
+        if self.cv_image.ndim == 3 and self.cv_image.shape[2] == 3:
+            self.hud_colorspace = "BGR (Color Estándar)"
+        elif self.cv_image.ndim == 3 and self.cv_image.shape[2] == 4:
+            self.hud_colorspace = "BGRA (Color con Transparencia)"
+        elif self.cv_image.ndim == 2:
+            self.hud_colorspace = "Grayscale (Escala de Grises)"
+        else:
+            self.hud_colorspace = "Desconocido"
         # Delegamos la conversión de colores BGR a RGB y a formato Qt
         self._pixmap = _cv_to_qpixmap(self.cv_image)
         # actualizar la referencia del manager
@@ -373,6 +393,27 @@ class ImageCanvas(QtWidgets.QWidget):
                     cross_color=self.cross_color,
                     cross_width=self.cross_width,
                     )
+        
+        #informacion del HUD
+        if self.hud_filename:
+            # Fondo semi-transparente
+            painter.setPen(QtCore.Qt.PenStyle.NoPen)
+            painter.setBrush(QtGui.QColor(79, 79, 79, 160)) # Negro con 60% opacidad
+            painter.drawRoundedRect(15, 15, 300, 85, 5, 5) # (x, y, width, height, radius_x, radius_y)
+            
+            # Textos en blanco
+            painter.setPen(QtGui.QColor(255, 255, 255))
+            font = painter.font()
+            font.setPointSize(10)
+            font.setBold(True)
+            painter.setFont(font)
+            
+            painter.drawText(25, 35, f"Archivo: {self.hud_filename}")
+            
+            font.setBold(False)
+            painter.setFont(font)
+            painter.drawText(25, 60, f"Progreso: {self.hud_progress}")
+            painter.drawText(25, 85, f"Color: {self.hud_colorspace}")
 
         painter.end()
 
