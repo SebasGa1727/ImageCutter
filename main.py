@@ -14,12 +14,14 @@ from core.output_fmt import export_image, export_th
 from utils.fmt_config import config_manager
 from ui.components.editor_toolbar import EditorToolbar
 
+# @ Created by SGV.dev
+
 logger = setup_logger(__name__)
 
 class MainWindow(QtWidgets.QMainWindow):
 	def __init__(self) -> None:
 		super().__init__()
-		self.setWindowTitle('HICutter - Historical Image Cutter')
+		self.setWindowTitle('HICutter - Historical Image Cutter by SGV.dev')
 
 		# Stacked widget: 0 = LandingView, 1 = ImageCanvas (editor)
 		self.stack = QtWidgets.QStackedWidget()
@@ -35,8 +37,6 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.batch_manager = BatchManager()
 		self.thread_pool = QThreadPool()
 		self.batch_manager.batch_finished.connect(self._on_batch_finished)
-		logger.info(f"Multithreading list: {self.thread_pool.maxThreadCount()} hilos maximos")
-
 
 		# Toolbar implementado desde "editor_toolbar.py"
 		self.toolbar = EditorToolbar(self)
@@ -50,12 +50,16 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.toolbar.sig_cancel_requested.connect(self.cancel_operation)
 
 		# Atajos globales
-		self.shortcut_return = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key.Key_Return), self)
+		self.KEY_ENTER: list =["Return", "Enter", "alt+2"] 
+		self.shortcut_return = QtGui.QShortcut(QtGui.QKeySequence(self.KEY_ENTER[0]), self)
 		self.shortcut_return.activated.connect(self._on_enter_key)
-		self.shortcut_enter = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key.Key_Enter), self)
+		self.shortcut_enter = QtGui.QShortcut(QtGui.QKeySequence(self.KEY_ENTER[1]), self)
 		self.shortcut_enter.activated.connect(self._on_enter_key)
-		self.shortcut_alt2 = QtGui.QShortcut(QtGui.QKeySequence("alt+2"), self)
+		self.shortcut_alt2 = QtGui.QShortcut(QtGui.QKeySequence(self.KEY_ENTER[2]), self)
 		self.shortcut_alt2.activated.connect(self._on_enter_key)
+
+		#Señales del canvas 
+		self.canvas.sig_save_requested.connect(self._on_enter_key)
 
 		# Conectar la señal de la LandingView para abrir imagen
 		try:
@@ -80,7 +84,6 @@ class MainWindow(QtWidgets.QMainWindow):
 		if path is None:
 			fname, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Abrir imagen', 'input', 'Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)')
 			if not fname:
-				QtWidgets.QMessageBox.information(self, 'Aviso', 'No se selecciono ninguna carpeta')
 				return
 		else:
 			fname = path
@@ -321,8 +324,6 @@ class MainWindow(QtWidgets.QMainWindow):
 		except Exception:
 			logger.error("Error al critico al intentar cancelar la operacion", exc_info=True)
 			QtWidgets.QMessageBox.warning(self, "Error", "Error al limpiar la memoria, intente nuevamente")
-
-
 
 def main() -> None:
 	app = QtWidgets.QApplication(sys.argv)

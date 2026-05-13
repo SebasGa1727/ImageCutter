@@ -22,7 +22,7 @@ class ImageCanvas(QtWidgets.QWidget):
       el último punto. Doble click con el botón izquierdo reinicia la selección.
     """
     fourPointsSelected = QtCore.pyqtSignal(object)
-    
+    sig_save_requested = QtCore.pyqtSignal()
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
@@ -40,18 +40,24 @@ class ImageCanvas(QtWidgets.QWidget):
         self._scaled_manager = ScaledPixmapManager()
         self._point_manager = PointManager()
 
+        #Shortcuts
+        self.KEY_ERRASE = "Backspace"
+        self.KEY_SNIPER = "Shift"
+        self.BTN_LEFT_CLICK = QtCore.Qt.MouseButton.LeftButton
+        self.BTN_MAGNIFIER = QtCore.Qt.MouseButton.RightButton
+        self.BTN_TO_SAVE = QtCore.Qt.MouseButton.RightButton
+
         # interacción/cursor
         self.setMouseTracking(True)
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self._mouse_in_img: bool = False
-        self._mouse_wx: int = 0
-        self._mouse_wy: int = 0
+        self._mouse_wx: float = 0
+        self._mouse_wy: float = 0
         self.cross_len: int = 10
         self.cross_color = QtGui.QColor(12, 140, 233)
         self.line_color = QtGui.QColor(0, 0, 0)
         self.cross_width: int = 2
-        self._cross_cursor = self._create_cross_cursor(self.cross_len)
-        # Caché del pixmap escalado está gestionada por `ScaledPixmapManager`
+
         # valores para la Lupa de enfoque 
         MAG_SIZE = 250
         MAG_ZOOM = 1.7
@@ -161,21 +167,22 @@ class ImageCanvas(QtWidgets.QWidget):
         self.update()
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
-        """Handle keyboard shortcuts: 'l' toggles magnifier; Shift enters precision (sniper) mode.
-
-        When Shift is pressed (non-autorepeat) we initialize the virtual cursor to the
-        current mouse position, hide the system cursor and lock the system pointer to
-        the widget center to allow infinite relative movement.
-        """
+        '''Presionando la tecla preestablecida se borra el ultimo punto,
+        con la tecla preestablecida se ejecuta el modo sniper
+        cuando se preciona la tecla preestablecida se ejecuta el modo sniper, el cual oculta el raton
+        y lo mueve al centro y modifica su velocidad de movimiento
+        '''
         key = event.key()
-        # Toggle magnifier
-        if key == QtCore.Qt.Key.Key_A:
-            self._magnifier_enabled = not self._magnifier_enabled
-            self.update()
-            return
+        # Borramos el ultimo punto
+        if key == QtGui.QKeySequence(self.KEY_ERRASE):
+            if len(self._point_manager) > 0:
+                self._point_manager.pop_last()
+                # Si ahora hay menos de 4 puntos, el seguimiento volverá al moverse el mouse
+                self.update()
 
-        # Delegate sniper/precision handling
-        handled, mwx, mwy = self._sniper.handle_key_press(event, self)
+        # Delegamos la funcion a Sniper_mode
+        sniper_key = QtGui.QKeySequence(self.KEY_SNIPER)
+        handled, mwx, mwy = self._sniper.handle_key_press(event, self, key_type=sniper_key)
         if handled:
             if mwx is not None and mwy is not None:
                 self._mouse_wx = mwx
@@ -189,7 +196,8 @@ class ImageCanvas(QtWidgets.QWidget):
         """Maneja la liberación de Shift para salir del modo precisión.
         Evita el glitch del ratón teletransportando el cursor del SO a la posición virtual.
         """
-        handled = self._sniper.handle_key_release(event, self)
+        sniper_key = QtGui.QKeySequence(self.KEY_SNIPER)
+        handled = self._sniper.handle_key_release(event, self, key_type=sniper_key)
         if handled:
             # Obtenemos la última coordenada (x, y) de tu cursor lento (Sniper)
             wfx, wfy = self._sniper.get_current_widget_pos(None, self)
@@ -204,13 +212,8 @@ class ImageCanvas(QtWidgets.QWidget):
         super().keyReleaseEvent(event)
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
-        """Rastrea la posición del cursor y actualiza el cursor cuando está sobre la imagen.
-
-        Si `self._precision_mode` está activo, se usa `_virtual_cursor_pos` y el
-        movimiento físico se captura como delta relativo desde el centro del widget
-        (bloqueando el cursor en el centro con `QCursor.setPos`).
-        """
-        # Delegate sniper precision movement
+        """Rastrea la posición del cursor y actualiza el cursor cuando está sobre la imagen"""
+        # Delega el movimiento a el modo sniper
         handled, mwx, mwy, min_img = self._sniper.handle_mouse_move(event, self)
         if handled:
             # update canvas state from sniper
@@ -219,21 +222,28 @@ class ImageCanvas(QtWidgets.QWidget):
                 self._mouse_wy = mwy
             if isinstance(min_img, bool):
                 self._mouse_in_img = min_img
+            #Obligamos a tener el cursor de windows oculto
+            if self._mouse_in_img and len(self._point_manager) < 4:
+                if self.cursor().shape() != QtCore.Qt.CursorShape.BlankCursor:
+                    self.setCursor(QtCore.Qt.CursorShape.BlankCursor)
             self.update()
             return
 
         # Comportamiento normal cuando no hay modo precisión
-        wx = int(event.position().x())
-        wy = int(event.position().y())
+        wx = event.position().x()
+        wy = event.position().y()
         img_pt = self.widget_to_image_coords(wx, wy)
+
         # Solo seguir el cursor si aún no se han colocado los 4 puntos
         if img_pt is not None and len(self._point_manager) < 4:
              self._mouse_in_img = True
              self._mouse_wx = wx
              self._mouse_wy = wy
-             # cambiar cursor a cruceta roja
-             self.setCursor(self._cross_cursor)
+             # Ocultamos cruceta de windows para crear la nuestra
+             if self.cursor().shape() != QtCore.Qt.CursorShape.BlankCursor:
+                self.setCursor(QtCore.Qt.CursorShape.BlankCursor)
         else:
+            #si la cruceta sale de nuestra imagen
             if self._mouse_in_img:
                 self._mouse_in_img = False
                 self.unsetCursor()
@@ -242,7 +252,7 @@ class ImageCanvas(QtWidgets.QWidget):
 
     # ---------- Interacción de usuario
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
-        if event.button() == QtCore.Qt.MouseButton.LeftButton:
+        if event.button() == self.BTN_LEFT_CLICK:
             # Si estamos en modo precisión, usar la posición virtual (float) para mapear
             wfx, wfy = self._sniper.get_current_widget_pos(event, self)
             pt = self.widget_to_image_coords(wfx, wfy)
@@ -260,18 +270,19 @@ class ImageCanvas(QtWidgets.QWidget):
                     self._mouse_in_img = False
                     self.unsetCursor()
                 self.update()
-        elif event.button() == QtCore.Qt.MouseButton.RightButton:
-            # remove last
-            if len(self._point_manager) > 0:
-                self._point_manager.pop_last()
-                # Si ahora hay menos de 4 puntos, el seguimiento volverá al moverse el mouse
-                self.update()
+        elif event.button() == self.BTN_MAGNIFIER:
+            # Activamos lupa
+            self._magnifier_enabled = not self._magnifier_enabled
+            self.update()
+            return
 
     def mouseDoubleClickEvent(self, event: QtGui.QMouseEvent) -> None:
         # doble click reinicia puntos
-        if event.button() == QtCore.Qt.MouseButton.LeftButton:
-            self._point_manager.reset()
-            self.update()
+        if event.button() == self.BTN_LEFT_CLICK:
+            self.reset_points()
+        #doble click derechi guarda imagen
+        if event.button() == self.BTN_TO_SAVE:
+            self.sig_save_requested.emit()
 
     # ---------- Acceso a datos
     def get_points(self) -> np.ndarray:
@@ -299,8 +310,6 @@ class ImageCanvas(QtWidgets.QWidget):
         self.unsetCursor()
         # no hay pantalla de inicio embebida en el canvas (orquestada por MainWindow)
         self.update()
-
-    # Ordering logic moved to `PointManager` in ui/components/point_manager.py
 
     # ---------- Pintado
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
@@ -361,7 +370,16 @@ class ImageCanvas(QtWidgets.QWidget):
                 if wcoords is None:
                     continue
                 wx, wy = wcoords
-                painter.drawLine(wx, wy, self._mouse_wx, self._mouse_wy)
+                painter.drawLine(QtCore.QPointF(wx, wy), QtCore.QPointF(self._mouse_wx, self._mouse_wy))
+        
+        #Dibujado de la cruceta
+        if self._mouse_in_img and len(self._point_manager) < 4:
+            painter.setPen(pen)
+            cx, cy = self._mouse_wx, self._mouse_wy
+            cl = self.cross_len
+
+            painter.drawLine(QtCore.QPointF(cx - cl, cy), QtCore.QPointF(cx + cl, cy))
+            painter.drawLine(QtCore.QPointF(cx, cy - cl), QtCore.QPointF(cx, cy + cl))
 
         # dibujar crucetas en cada punto
         painter.setPen(pen)
