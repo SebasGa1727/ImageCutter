@@ -50,7 +50,7 @@ def _cv2_to_pil(cv_img: np.ndarray) -> Image.Image:
     
     return Image.fromarray(rgb_img)
 
-def export_image(cv_image: np.ndarray, base_filename: str) -> str:
+def export_image(cv_image: np.ndarray, base_filename: str, parent_folder_name: str = "") -> str:
     """Exporta la imagen recortada según la configuración."""
     try:
         #Leemos la configuracion de nuestro archivo
@@ -64,6 +64,10 @@ def export_image(cv_image: np.ndarray, base_filename: str) -> str:
         if not base_dir:
             base_dir = os.path.join(os.path.expanduser("~"), "Documents", "HICutter_Exports")
         
+        #insertamos el nombre de la carpeta de donde se extrajeron las imagenes
+        if parent_folder_name:
+            base_dir = os.path.join(base_dir, parent_folder_name)
+
         out_dir = os.path.join(base_dir, sub_folder)
         os.makedirs(out_dir, exist_ok=True)
 
@@ -100,7 +104,7 @@ def export_image(cv_image: np.ndarray, base_filename: str) -> str:
         logger.error(f"Error critico al intentar exportar imagen recortada: {base_filename}", exc_info=True)
         raise e
     
-def export_th(cv_image: np.ndarray, base_filename: str) -> str:
+def export_th(cv_image: np.ndarray, base_filename: str, parent_folder_name: str = "") -> str:
     """Exporta la imagen en formato Thumbnail, según la configuración."""
     try:
         #Leemos la configuracion de nuestro archivo
@@ -113,6 +117,9 @@ def export_th(cv_image: np.ndarray, base_filename: str) -> str:
         if not base_dir:
             base_dir = os.path.join(os.path.expanduser("~"), "Documents", "HICutter_Exports")
         
+        #insertamos el nombre de la carpeta de donde se extrajeron las imagenes
+        if parent_folder_name:
+            base_dir = os.path.join(base_dir, parent_folder_name)
         os.makedirs(base_dir, exist_ok=True)
 
         # Convertimos a pillow y calculamos el tamaño

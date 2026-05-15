@@ -16,6 +16,9 @@ class EditorToolbar(QtWidgets.QToolBar):
         # Inicializamos la clase padre "toolbar" y le brindamos de apodo
         # "Herramientas de edicion"
         super().__init__("Herramientas de Edicion", parent)
+        #Declaramos las "Shortcuts"
+        self.KEY_RESTART_POINTS = "esc"
+        self.KEY_RIGHT_ROTATE = "alt+1"
 
         # llamamos a los metodos privados que brindan la estrucutra y personalizacion
         self._apply_style()
@@ -57,7 +60,7 @@ class EditorToolbar(QtWidgets.QToolBar):
         self.reset_action = QtGui.QAction('Reiniciar puntos', self)
         # Genera un recuadro flotante diciendo que hace este boton
         self.reset_action.setToolTip("Reinicia los todos los puntos colocados")
-        self.reset_action.setShortcut("Esc")
+        self.reset_action.setShortcut(self.KEY_RESTART_POINTS)
         # Al presionar(.triggered), disparamos(.emit) nuestra señal
         self.reset_action.triggered.connect(self.sig_reset_requested.emit)
         self.addAction(self.reset_action)
@@ -67,7 +70,7 @@ class EditorToolbar(QtWidgets.QToolBar):
         self.rotate_right_action = QtGui.QAction('Rotar 90° →', self)
         self.rotate_right_action.setToolTip("Rotar imagen 90° a la derecha")
         # Le asignamos atajos "Shortcuts" y un solo atajo "Shortcut"
-        self.rotate_right_action.setShortcut("alt+1")
+        self.rotate_right_action.setShortcut(self.KEY_RIGHT_ROTATE)
         self.rotate_right_action.triggered.connect(self.sig_rotate_right_requested.emit)
         self.addAction(self.rotate_right_action)
 

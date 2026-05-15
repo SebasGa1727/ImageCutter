@@ -1,32 +1,67 @@
-from PyQt6 import QtWidgets, QtGui, QtCore
 import sys
 import cv2
 import numpy as np
 import os
-from core.processor import process_perspective_crop, rotate_image
+from PyQt6 import QtWidgets, QtGui, QtCore
+from PyQt6.QtCore import QThreadPool, QRunnable, pyqtSignal, QObject
 
+from core.batch_engine import BatchManager, BatchWorker
+from core.processor import process_perspective_crop, rotate_image
+from core.output_pdf_fmt import export_to_pdf
 from image_canvas import ImageCanvas
 from ui.views.landing_view import LandingView
 from utils.logger import setup_logger
 from core.output_fmt import export_image, export_th
 from utils.fmt_config import config_manager
 from ui.components.editor_toolbar import EditorToolbar
+from ui.views.batch_summary_view import BatchSummaryView
+
+# @ Created by SGV.dev
 
 logger = setup_logger(__name__)
+
+class PDFWorkerSignals(QObject):
+	'''Establecemos las señales para el worjer de PDF'''
+	finished = pyqtSignal(str) #<- Devuelve la ruta final del PDF
+	error = pyqtSignal(str)
+
+class PDFWorker(QRunnable):
+	'''Hilo de trabajo (Worker) para generar PDF en segundo plano'''
+	def __init__(self, ordered_paths: list[str], output_filename: str):
+		super().__init__()
+		self.ordered_paths = ordered_paths
+		self.output_filename = output_filename
+		self.signals = PDFWorkerSignals()
+	
+	def run(self):
+		try:
+			final_path = export_to_pdf(self.ordered_paths, self.output_filename)
+			self.signals.finished.emit(final_path)
+		except Exception as e:
+			self.signals.error.emit(str(e))
 
 class MainWindow(QtWidgets.QMainWindow):
 	def __init__(self) -> None:
 		super().__init__()
-		self.setWindowTitle('HICutter - Historical Image Cutter')
+		self.setWindowTitle('HICutter - Historical Image Cutter by SGV.dev')
 
-		# Stacked widget: 0 = LandingView, 1 = ImageCanvas (editor)
+		# Stacked widget: 0 = LandingView, 1 = ImageCanvas (editor), 2= BatchSummaryView
 		self.stack = QtWidgets.QStackedWidget()
 		self.landing = LandingView()
 		self.canvas = ImageCanvas()
+		self.summary_view = BatchSummaryView()
 		self.stack.addWidget(self.landing)
 		self.stack.addWidget(self.canvas)
+		self.stack.addWidget(self.summary_view)
 		self.setCentralWidget(self.stack)
 		self.current_image_path: str | None = None
+
+		#Procesamiento por lote implementado desde Batch_engine
+		self.is_batch_mode: bool = False
+		self.batch_manager = BatchManager()
+		self.thread_pool = QThreadPool()
+		self.batch_manager.batch_finished.connect(self._on_batch_finished)
+		self.parent_folder_name: str = ""
 
 		# Toolbar implementado desde "editor_toolbar.py"
 		self.toolbar = EditorToolbar(self)
@@ -40,12 +75,19 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.toolbar.sig_cancel_requested.connect(self.cancel_operation)
 
 		# Atajos globales
-		self.shortcut_return = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key.Key_Return), self)
+		self.KEY_ENTER: list =["Return", "Enter", "alt+2"] 
+		self.shortcut_return = QtGui.QShortcut(QtGui.QKeySequence(self.KEY_ENTER[0]), self)
 		self.shortcut_return.activated.connect(self._on_enter_key)
-		self.shortcut_enter = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key.Key_Enter), self)
+		self.shortcut_enter = QtGui.QShortcut(QtGui.QKeySequence(self.KEY_ENTER[1]), self)
 		self.shortcut_enter.activated.connect(self._on_enter_key)
-		self.shortcut_alt2 = QtGui.QShortcut(QtGui.QKeySequence("alt+2"), self)
+		self.shortcut_alt2 = QtGui.QShortcut(QtGui.QKeySequence(self.KEY_ENTER[2]), self)
 		self.shortcut_alt2.activated.connect(self._on_enter_key)
+
+		#Señales del canvas 
+		self.canvas.sig_save_requested.connect(self._on_enter_key)
+
+		#Señales del batch summary view
+		self.summary_view.request_continue.connect(self._on_summary_continue)
 
 		# Conectar la señal de la LandingView para abrir imagen
 		try:
@@ -70,7 +112,6 @@ class MainWindow(QtWidgets.QMainWindow):
 		if path is None:
 			fname, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Abrir imagen', 'input', 'Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)')
 			if not fname:
-				QtWidgets.QMessageBox.information(self, 'Aviso', 'No se selecciono ninguna carpeta')
 				return
 		else:
 			fname = path
@@ -93,19 +134,15 @@ class MainWindow(QtWidgets.QMainWindow):
 		# Ejecuta save_points si hay 4 puntos seleccionados
 		pts = self.canvas.get_points()
 		if pts.shape[0] == 4:
-			self.save_points()
+			if self.is_batch_mode:
+				self._process_batch_image() #<- Ejecutamos guardado de forma asincrona (lotes)
+			else:
+				self.save_points()#<- Ejecutamos guardado de forma sincrona (1 imagen)
 
 	def _handle_request_load_image(self, *args) -> None:
 		# Wrapper that accepts optional path from LandingView signal
 		path = args[0] if args else None
 		self.load_image(path)
-
-	def _start_batch_workflow(self):
-		from ui.views.batch_setup_dialog import BatchSetupDialog
-		dialog = BatchSetupDialog(self)
-		if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-			carpeta_entrada, carpeta_salida = dialog.get_directories()
-			print(f"Lote iniciado: carpeta a procesar: {carpeta_entrada}\nCarpeta salida: {carpeta_salida}")
 
 	def _apply_rotation(self, direction_rotate: str) -> None:
 		"""Se aplica la rotacion (via processor.rotate_image) y recarga la imagen via canvas"""
@@ -129,8 +166,91 @@ class MainWindow(QtWidgets.QMainWindow):
 			self.shortcut_return.setEnabled(editor_active)
 			self.shortcut_alt2.setEnabled(editor_active)
 		except Exception:
-			logger.warning("LA funcionalidad de 'Shortcuts' no fue activada/ desactivada correctamente", exc_info=True)
+			logger.warning("LA funcionalidad de 'Shortcuts' no fue activada/desactivada correctamente", exc_info=True)
 
+	def _start_batch_workflow(self):
+		from ui.views.batch_setup_dialog import BatchSetupDialog
+		dialog = BatchSetupDialog(self)
+		if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+			carpeta_entrada, carpeta_salida = dialog.get_directories()
+			
+			# Le damos la carpeta al administrador de carpetas
+			if self.batch_manager.load_directory(carpeta_entrada):
+				self.is_batch_mode = True
+				logger.info(f"Lote iniciado: {len(self.batch_manager.image_files)} fotos en cola")
+				#Asignamos la carpeta de salida para el TH
+				#Cargamos la primera foto
+				self._load_next_batch_image()
+			else:
+				self.is_batch_mode = False
+				QtWidgets.QMessageBox.warning(self, "Error", "No se encontraron imagenes validas en la carpeta de entrada")
+				self._start_batch_workflow()
+
+	def _load_next_batch_image(self):
+		"""Pide la siguiente imagen al manager y la carga en el canvas"""
+		next_path =self.batch_manager.get_next_image()
+
+		if next_path:
+			img = cv2.imread(next_path)
+			if img is not None:
+				self.current_image_path = next_path
+				#Le pasamos la info al HUD
+				nombre_archivo = os.path.basename(next_path)
+				progreso = f"{self.batch_manager.current_index}/{len(self.batch_manager.image_files)}"
+				self.canvas.set_hud_info(nombre_archivo, progreso)
+				self.canvas.load_image(cv_image=img)
+				self.stack.setCurrentIndex(1)
+			else:
+				logger.error(f"imagen corrupt: {next_path}", exc_info=True)
+				self.batch_manager.record_error(next_path, "No se pudo leer el archivo con OpenCV")
+				self._load_next_batch_image()
+		else:
+			#Si next_path es None, significa que la cola esta vacia
+			#Esperamos a que los hilos terminen anuncioando con un mensaje al usuario
+			# Mostramos un Pop-Up Indeterminado que NO tiene botón de cancelar ni de OK.
+			self.wait_dialog = QtWidgets.QProgressDialog("Guardando las últimas imágenes...", None, 0, 0, self)
+			self.wait_dialog.setWindowTitle("Procesando")
+			self.wait_dialog.setWindowModality(QtCore.Qt.WindowModality.WindowModal) # Bloquea la ventana detrás
+			self.wait_dialog.setCancelButton(None) # Le quitamos el botón cancelar
+			self.wait_dialog.show()
+
+	def _process_batch_image(self):
+		'''Procesa el trabajo de guardado de forma asincrona'''
+		if self.canvas.cv_image is None or self.current_image_path is None:
+			logger.warning("Error de procesamiento de guardado en canvas o image_path", exc_info=True)
+			return
+
+		pts = self.canvas.get_points().astype(np.float32)
+		cv_img_copy = self.canvas.cv_image.copy() #<-Copia de seguridad
+		file_path = self.current_image_path
+		#Extraemos solo el nombre de donde se extrajeron las imagenes para poder crear la misma carpeta en al salida
+		self.parent_folder_name = os.path.basename(os.path.dirname(self.current_image_path)) 
+		#Creamos al obrero
+		worker = BatchWorker(cv_img_copy, pts, file_path, self.parent_folder_name)
+		#Conectamos las señales
+		worker.signals.finished.connect(self.batch_manager.record_success)
+		worker.signals.error.connect(self.batch_manager.record_error)
+		#Lo mandamos a un hilo aparte
+		self.thread_pool.start(worker)
+		#Cargamos la siguiente imagen
+		self._load_next_batch_image()
+
+	def _on_batch_finished(self, success_list: list, error_list: list):
+		'''Se ejecuta cuando el ultimo obrero termina de guardar'''
+		#Limpiamos el canvas
+		self.canvas.set_hud_info("","")
+		self.canvas.unload_image()
+		self.current_image_path = None
+		self.is_batch_mode = False
+
+		#Cargamos los datos de las listas
+		self.summary_view.load_summary_data(success_list, error_list)
+
+		#Cambiamos la vista a nuestro summary view
+		self.stack.setCurrentIndex(2)
+
+		if hasattr(self, 'wait_dialog') and self.wait_dialog:
+			self.wait_dialog.close()
 
 	def save_points(self) -> None:
 		"""Guarda la imagen procesada preguntando primero el destino.
@@ -181,12 +301,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
 		# Obtenemos el nombre del archivo
 		base_name = "crop_temp.jpg"
+		parent_folder_name = ""
 		if getattr(self,"current_image_path", None):
 			base_name = os.path.basename(self.current_image_path)
+			#Extraemos solo el nombre de donde se extrajeron las imagenes para poder crear la misma carpeta en al salida
+			parent_folder_name = os.path.basename(os.path.dirname(self.current_image_path)) 
+
 		
 		# Delegamos la exportacion a core/output_fmt.py
 		try:
-			export_image(warped, base_name)
+			export_image(warped, base_name, parent_folder_name)
 
 		except Exception as e:
 			logger.error("Error al Exportar imagen recortada", exc_info=True)
@@ -195,7 +319,7 @@ class MainWindow(QtWidgets.QMainWindow):
 		try:
 			export_th_is_enabled = config_manager.get("export_th", "enabled")
 			if export_th_is_enabled:
-				export_th(warped, base_name)
+				export_th(warped, base_name, parent_folder_name)
 				
 		except Exception:
 			logger.error("Error al Exportar formato TH", exc_info=True)
@@ -239,7 +363,65 @@ class MainWindow(QtWidgets.QMainWindow):
 			logger.error("Error al critico al intentar cancelar la operacion", exc_info=True)
 			QtWidgets.QMessageBox.warning(self, "Error", "Error al limpiar la memoria, intente nuevamente")
 
+	def _on_summary_continue(self, with_th: bool, th_image_path: str) -> None:
+		'''Recibe la señal del batchsummary cuando el usuario confirma el lote'''
+		#Recibimos la lista ordenada por la UI del usaurio
+		ordered_paths = []
+		for i in range(self.summary_view.list_widget.count()):
+			# Sacamos el dato oculto (la ruta completa real)
+			real_path = self.summary_view.list_widget.item(i).data(QtCore.Qt.ItemDataRole.UserRole)
+			ordered_paths.append(real_path)
 
+		if with_th and th_image_path:
+			logger.info(f"El usuario creo th para {th_image_path}")
+			try:
+				img_to_th = cv2.imread(th_image_path)
+				if img_to_th is not None:
+					base_name = os.path.basename(th_image_path)
+					export_th(img_to_th, base_name, self.parent_folder_name)
+			except Exception:
+				logger.error("Error al intentar crear TH en procesamiento por lote", exc_info=True)
+				QtWidgets.QMessageBox.warning(self, "Error de procesamiento", "Error al querer generar el TH")
+		
+		logger.info("inicializando generacion de PDF")
+		
+		# Mostramos pantalla de carga
+		self.pdf_wait_dialog = QtWidgets.QProgressDialog("Ensamblando documento PDF, por favor espere...", None, 0, 0, self)
+		self.pdf_wait_dialog.setWindowTitle("Generando PDF")
+		self.pdf_wait_dialog.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+		self.pdf_wait_dialog.setCancelButton(None)
+		self.pdf_wait_dialog.show()
+		
+		# Determinamos el nombre de la carpeta final (El nombre de la carpeta de extraccion)
+		pdf_name = self.parent_folder_name if self.parent_folder_name else "PDF_exportado_por_HICutter"
+
+		pdf_worker = PDFWorker(ordered_paths, pdf_name)
+		pdf_worker.signals.finished.connect(self._on_pdf_success) 
+		pdf_worker.signals.error.connect(self._on_pdf_error) 
+
+		self.thread_pool.start(pdf_worker)
+	
+	def _on_pdf_success(self, final_path: str):
+		if hasattr(self, 'pdf_wait_dialog') and self.pdf_wait_dialog:
+			self.pdf_wait_dialog.close()
+
+			QtWidgets.QMessageBox.information(
+				self,
+				"PDF Generado exitosamente",
+				f"El PDF ha sido generado exitosamente en:\n{final_path}"
+				)
+		self.stack.setCurrentIndex(0)
+
+	def _on_pdf_error(self, e: str):
+		if hasattr(self, 'pdf_wait_dialog') and self.pdf_wait_dialog:
+			self.pdf_wait_dialog.close()
+		logger.error("Error critico creando el PDF", exc_info=True)
+		QtWidgets.QMessageBox.critical(
+			self,
+			"Error Critico",
+			f"No se pudo gnerar el PDF\n\n{e}")
+		
+		self.stack.setCurrentIndex(0)
 
 def main() -> None:
 	app = QtWidgets.QApplication(sys.argv)

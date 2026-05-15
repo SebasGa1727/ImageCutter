@@ -24,7 +24,8 @@ class MagnifierTool:
 
     def draw(self, painter: QtGui.QPainter, widget_pos: Tuple[int, int], img_pos: Tuple[float, float], 
              cv_image: np.ndarray, widget: Optional[QtGui.QWidget] = None,
-              cross_len: int = 8, cross_color: Optional[QtGui.QColor] = None, cross_width: int = 1) -> None:
+              cross_len: int = 8, cross_color: Optional[QtGui.QColor] = None, 
+              cross_width: int = 1, border_color: Optional[QtGui.QColor] = None) -> None:
         """Draw the magnifier overlay"""
         if cv_image is None or img_pos is None:
             return
@@ -65,8 +66,8 @@ class MagnifierTool:
             oy = max(0, min(widget.height() - oh, oy))
 
         # dibujar fondo y borde
-        painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), self.border))
-        painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        painter.setBrush(QtGui.QBrush(border_color if border_color else QtGui.QColor(255, 255, 255)))
         painter.drawRect(ox - self.border, oy - self.border, ow + 2 * self.border, oh + 2 * self.border)
         painter.drawPixmap(ox, oy, mag_pix)
 
