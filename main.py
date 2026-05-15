@@ -3,10 +3,11 @@ import cv2
 import numpy as np
 import os
 from PyQt6 import QtWidgets, QtGui, QtCore
-from PyQt6.QtCore import QThreadPool
+from PyQt6.QtCore import QThreadPool, QRunnable, pyqtSignal, QObject
 
 from core.batch_engine import BatchManager, BatchWorker
 from core.processor import process_perspective_crop, rotate_image
+from core.output_pdf_fmt import export_to_pdf
 from image_canvas import ImageCanvas
 from ui.views.landing_view import LandingView
 from utils.logger import setup_logger
@@ -18,6 +19,26 @@ from ui.views.batch_summary_view import BatchSummaryView
 # @ Created by SGV.dev
 
 logger = setup_logger(__name__)
+
+class PDFWorkerSignals(QObject):
+	'''Establecemos las señales para el worjer de PDF'''
+	finished = pyqtSignal(str) #<- Devuelve la ruta final del PDF
+	error = pyqtSignal(str)
+
+class PDFWorker(QRunnable):
+	'''Hilo de trabajo (Worker) para generar PDF en segundo plano'''
+	def __init__(self, ordered_paths: list[str], output_filename: str):
+		super().__init__()
+		self.ordered_paths = ordered_paths
+		self.output_filename = output_filename
+		self.signals = PDFWorkerSignals()
+	
+	def run(self):
+		try:
+			final_path = export_to_pdf(self.ordered_paths, self.output_filename)
+			self.signals.finished.emit(final_path)
+		except Exception as e:
+			self.signals.error.emit(str(e))
 
 class MainWindow(QtWidgets.QMainWindow):
 	def __init__(self) -> None:
@@ -362,13 +383,45 @@ class MainWindow(QtWidgets.QMainWindow):
 				logger.error("Error al intentar crear TH en procesamiento por lote", exc_info=True)
 				QtWidgets.QMessageBox.warning(self, "Error de procesamiento", "Error al querer generar el TH")
 		
-		logger.info(f"Orden de lista para PDF {ordered_paths}")
+		logger.info("inicializando generacion de PDF")
 		
-		# TODO:
-		QtWidgets.QMessageBox.information(self, "proximamente", "Aqui se ejecutara la creacion de PDF")
+		# Mostramos pantalla de carga
+		self.pdf_wait_dialog = QtWidgets.QProgressDialog("Ensamblando documento PDF, por favor espere...", None, 0, 0, self)
+		self.pdf_wait_dialog.setWindowTitle("Generando PDF")
+		self.pdf_wait_dialog.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+		self.pdf_wait_dialog.setCancelButton(None)
+		self.pdf_wait_dialog.show()
+		
+		# Determinamos el nombre de la carpeta final (El nombre de la carpeta de extraccion)
+		pdf_name = self.parent_folder_name if self.parent_folder_name else "PDF_exportado_por_HICutter"
 
+		pdf_worker = PDFWorker(ordered_paths, pdf_name)
+		pdf_worker.signals.finished.connect(self._on_pdf_success) 
+		pdf_worker.signals.error.connect(self._on_pdf_error) 
+
+		self.thread_pool.start(pdf_worker)
+	
+	def _on_pdf_success(self, final_path: str):
+		if hasattr(self, 'pdf_wait_dialog') and self.pdf_wait_dialog:
+			self.pdf_wait_dialog.close()
+
+			QtWidgets.QMessageBox.information(
+				self,
+				"PDF Generado exitosamente",
+				f"El PDF ha sido generado exitosamente en:\n{final_path}"
+				)
 		self.stack.setCurrentIndex(0)
 
+	def _on_pdf_error(self, e: str):
+		if hasattr(self, 'pdf_wait_dialog') and self.pdf_wait_dialog:
+			self.pdf_wait_dialog.close()
+		logger.error("Error critico creando el PDF", exc_info=True)
+		QtWidgets.QMessageBox.critical(
+			self,
+			"Error Critico",
+			f"No se pudo gnerar el PDF\n\n{e}")
+		
+		self.stack.setCurrentIndex(0)
 
 def main() -> None:
 	app = QtWidgets.QApplication(sys.argv)
