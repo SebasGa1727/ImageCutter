@@ -67,8 +67,9 @@ class ImageCanvas(QtWidgets.QWidget):
         MAG_OFFSET = 60
         self._magnifier_enabled: bool = False
         self._magnifier = MagnifierTool(size=MAG_SIZE, zoom=MAG_ZOOM, border=MAG_BORDER, offset=MAG_OFFSET)
+       
         # Modo sniper/precisión
-        SNIPER_SENSITIVITY = 0.06
+        SNIPER_SENSITIVITY = 0.07
         self._sniper = SniperModeManager(sensitivity=SNIPER_SENSITIVITY)
 
 
