@@ -16,38 +16,35 @@ class SniperModeManager:
         self.virtual_cursor_pos: QtCore.QPointF = QtCore.QPointF()
         self.sensitivity: float = float(sensitivity)
         
-        # El Ancla Absoluta
         self._anchor_pos = QtCore.QPoint()
+        self._last_physical_pos = QtCore.QPoint()
         
-        # El Filtro de Tiempo
-        self._activation_timestamp: int = 0
+        # Rastreo de salida
+        self._release_pos = QtCore.QPoint()
+        
+        self._sync_pending: bool = False
+        # Contador de seguridad para evitar bloqueos infinitos al salir
+        self._ghost_clear_counter: int = 0 
 
     def handle_key_press(self, event: QtGui.QKeyEvent, widget: "ImageCanvas", key_type) -> tuple[bool, Optional[float], Optional[float]]:
-        """Maneja la activacion de la tecla para activar el modo sniper"""
         key = event.key()
         if key == key_type and not event.isAutoRepeat():
-            #seguridad para evitar activar el modo sniper fuera de la imagen
             if not widget._mouse_in_img:
                 return False, None, None
             
             if not self.active:
-                # 1. Guardamos dónde estaba la cruceta visual
-                gpos = QtGui.QCursor.pos()
-                wpos = widget.mapFromGlobal(gpos)
-                self.virtual_cursor_pos = QtCore.QPointF(float(wpos.x()), float(wpos.y()))
+                self.virtual_cursor_pos = QtCore.QPointF(float(widget._mouse_wx), float(widget._mouse_wy))
                 
-                # 2. Definimos nuestra Ancla (El centro exacto del widget)
                 rect_center = widget.rect().center()
                 self._anchor_pos = widget.mapToGlobal(rect_center)
                 
-                # 3. Lanzamos el Ancla por primera vez
                 QtGui.QCursor.setPos(self._anchor_pos)
                 
-                # 4. GUARDAMOS EL TIEMPO EXACTO para filtrar la basura
-                self._activation_timestamp = event.timestamp()
+                self._sync_pending = True
+                self._last_physical_pos = self._anchor_pos
 
                 self.active = True
-                widget.grabMouse() # Secuestramos el ratón a nivel OS
+                widget.grabMouse()
                 return True, self.virtual_cursor_pos.x(), self.virtual_cursor_pos.y()
         return False, None, None
 
@@ -57,11 +54,15 @@ class SniperModeManager:
             if key == key_type and not event.isAutoRepeat():
                 if self.active:
                     self.active = False
+                    self._ghost_clear_counter = 3 # Bloquea máximo 3 eventos basura
                     try:
                         widget.releaseMouse()
                         vpx = int(round(self.virtual_cursor_pos.x()))
                         vpy = int(round(self.virtual_cursor_pos.y()))
                         global_pos = widget.mapToGlobal(QtCore.QPoint(vpx, vpy))
+                        
+                        # Guardamos la posición exacta donde Windows reanudará el control
+                        self._release_pos = global_pos 
                         QtGui.QCursor.setPos(global_pos)
                     except Exception:
                         logger.error("Fallo al restaurar el cursor", exc_info=True)
@@ -71,37 +72,52 @@ class SniperModeManager:
         return False
 
     def handle_mouse_move(self, event: QtGui.QMouseEvent, widget: "ImageCanvas") -> Tuple[bool, Optional[float], Optional[float], Optional[bool]]:
-        """Procesa el movimiento usando el patrón de Ancla Absoluta"""
+        current_physical_pos = event.globalPosition().toPoint()
+
+        # --- FILTRO 1: CAZAFANTASMAS DE SALIDA ---
         if not self.active:
+            if self._ghost_clear_counter > 0:
+                self._ghost_clear_counter -= 1
+                
+                # Buscamos el eco basándonos en la posición real de salida, no en el centro
+                dist_x = abs(current_physical_pos.x() - self._release_pos.x())
+                dist_y = abs(current_physical_pos.y() - self._release_pos.y())
+                
+                if dist_x < 50 and dist_y < 50:
+                    # Encontramos el eco esperado antes de agotar el contador. Apagamos seguridad.
+                    self._ghost_clear_counter = 0 
+                    return False, None, None, None
+                else:
+                    # Evento físico basura de antes de soltar la tecla. Se descarta.
+                    return True, widget._mouse_wx, widget._mouse_wy, widget._mouse_in_img
+                    
             return False, None, None, None
             
-        current_physical_pos = event.globalPosition().toPoint()
-        
-        # --- FILTRO 1: TIEMPO (Ignora movimientos previos a presionar Shift) ---
-        if event.timestamp() <= self._activation_timestamp:
-            return True, self.virtual_cursor_pos.x(), self.virtual_cursor_pos.y(), True
+        # --- FILTRO 2: EVITAR EL DEADLOCK DEL ECO INTERNO ---
+        if self._sync_pending:
+            dist_x = abs(current_physical_pos.x() - self._anchor_pos.x())
+            dist_y = abs(current_physical_pos.y() - self._anchor_pos.y())
+            
+            if dist_x < 250 and dist_y < 250:
+                self._sync_pending = False
+                self._last_physical_pos = current_physical_pos
+                return True, self.virtual_cursor_pos.x(), self.virtual_cursor_pos.y(), True
+            else:
+                return True, self.virtual_cursor_pos.x(), self.virtual_cursor_pos.y(), True
 
-        # --- FILTRO 2: EL ECO DEL ANCLA (Ignora el evento artificial de Windows) ---
-        if current_physical_pos == self._anchor_pos:
-            return True, self.virtual_cursor_pos.x(), self.virtual_cursor_pos.y(), True
-
-        # --- MATEMÁTICA PURA (Deltas basados en el Ancla) ---
-        dx = current_physical_pos.x() - self._anchor_pos.x()
-        dy = current_physical_pos.y() - self._anchor_pos.y()
+        # --- MATEMÁTICA PURA RELATIVA ---
+        dx = current_physical_pos.x() - self._last_physical_pos.x()
+        dy = current_physical_pos.y() - self._last_physical_pos.y()
         
-        # Aplicamos la sensibilidad
+        self._last_physical_pos = current_physical_pos
+        
         dx *= self.sensitivity
         dy *= self.sensitivity
 
         new_vx = self.virtual_cursor_pos.x() + dx
         new_vy = self.virtual_cursor_pos.y() + dy   
         
-        # Actualizamos la posición virtual
-        self.virtual_cursor_pos.setX(self.virtual_cursor_pos.x() + dx)
-        self.virtual_cursor_pos.setY(self.virtual_cursor_pos.y() + dy)
-        
-        # Limitamos la cruceta para que no salga del Canvas y de la imagen
-        #Le pedimos al canvas las dimensiones de la foto
+        # --- LÍMITES A LA IMAGEN ---
         scaled, left, top = widget._scaled_pixmap_and_offset()
         if scaled is not None:
             min_x = float(left)
@@ -109,7 +125,6 @@ class SniperModeManager:
             min_y = float(top)
             max_y = float(top + scaled.height() -1)
         else:
-            # Fallback por seguridad (Limites del widget)
             min_x, max_x = 0.0, float(widget.width() - 1)
             min_y, max_y = 0.0, float(widget.height() - 1)
 
@@ -124,9 +139,13 @@ class SniperModeManager:
         img_pt = widget.widget_to_image_coords(mouse_wx, mouse_wy)
         mouse_in_img = (img_pt is not None and len(widget._point_manager) < 4)
 
-        # --- EL RE-ANCLAJE (Manteniendo a Windows atrapado) ---
-        QtGui.QCursor.setPos(self._anchor_pos)
-        # ------------------------------------------------------
+        # --- LA CAJA DE RESPIRO ---
+        dist_x_wrap = abs(current_physical_pos.x() - self._anchor_pos.x())
+        dist_y_wrap = abs(current_physical_pos.y() - self._anchor_pos.y())
+        
+        if dist_x_wrap > 250 or dist_y_wrap > 250:
+            QtGui.QCursor.setPos(self._anchor_pos)
+            self._sync_pending = True 
 
         return True, mouse_wx, mouse_wy, mouse_in_img
 
@@ -141,11 +160,13 @@ class SniperModeManager:
         if not self.active:
             return
         self.active = False
+        self._ghost_clear_counter = 3
         try:
             widget.releaseMouse()
             vpx = int(round(self.virtual_cursor_pos.x()))
             vpy = int(round(self.virtual_cursor_pos.y()))
             global_pos = widget.mapToGlobal(QtCore.QPoint(vpx, vpy))
+            self._release_pos = global_pos
             QtGui.QCursor.setPos(global_pos)
         except Exception:
             logger.error("Fallo en deactivate()", exc_info=True)

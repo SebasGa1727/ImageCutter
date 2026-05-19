@@ -2,6 +2,7 @@ import sys
 import cv2
 import numpy as np
 import os
+import gc
 from PyQt6 import QtWidgets, QtGui, QtCore
 from PyQt6.QtCore import QThreadPool, QRunnable, pyqtSignal, QObject
 
@@ -232,6 +233,10 @@ class MainWindow(QtWidgets.QMainWindow):
 		worker.signals.error.connect(self.batch_manager.record_error)
 		#Lo mandamos a un hilo aparte
 		self.thread_pool.start(worker)
+		# Descargamos la imagen vieja del canvas. Esto borra la matriz principal 
+		# y el pixmap de la interfaz antes de leer la nueva desde el disco.
+		self.canvas.unload_image()
+		gc.collect()
 		#Cargamos la siguiente imagen
 		self._load_next_batch_image()
 

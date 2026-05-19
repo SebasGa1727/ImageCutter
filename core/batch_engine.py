@@ -1,4 +1,5 @@
 import os
+import gc
 import cv2
 import numpy as np
 from PyQt6 import QtCore
@@ -47,6 +48,11 @@ class BatchWorker(QtCore.QRunnable):
             
             # Avisamos que terminamos exitosamente
             self.signals.finished.emit(out_path)
+
+            del warped
+            del self.cv_image
+
+            gc.collect()
             
         except Exception as e:
             logger.error(f"Error en BatchWorker procesando {self.file_name}", exc_info=True)
