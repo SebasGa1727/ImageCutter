@@ -19,11 +19,11 @@ class SniperModeManager:
         self._anchor_pos = QtCore.QPoint()
         self._last_physical_pos = QtCore.QPoint()
         
-        # Rastreo de salida
         self._release_pos = QtCore.QPoint()
         
+        self._teleport_source = QtCore.QPoint() 
+        
         self._sync_pending: bool = False
-        # Contador de seguridad para evitar bloqueos infinitos al salir
         self._ghost_clear_counter: int = 0 
 
     def handle_key_press(self, event: QtGui.QKeyEvent, widget: "ImageCanvas", key_type) -> tuple[bool, Optional[float], Optional[float]]:
@@ -37,12 +37,19 @@ class SniperModeManager:
                 
                 rect_center = widget.rect().center()
                 self._anchor_pos = widget.mapToGlobal(rect_center)
+                current_phys = QtGui.QCursor.pos()
                 
-                QtGui.QCursor.setPos(self._anchor_pos)
+                # Evaluamos si ya estamos físicamente en el centro
+                dist_sq = (current_phys.x() - self._anchor_pos.x())**2 + (current_phys.y() - self._anchor_pos.y())**2
                 
-                self._sync_pending = True
-                self._last_physical_pos = self._anchor_pos
-
+                if dist_sq < 100: # Si estamos a menos de 10px, no requerimos escudo
+                    self._sync_pending = False
+                    self._last_physical_pos = current_phys
+                else:
+                    self._sync_pending = True
+                    self._teleport_source = current_phys # Registramos "El Pasado"
+                    QtGui.QCursor.setPos(self._anchor_pos)
+                    
                 self.active = True
                 widget.grabMouse()
                 return True, self.virtual_cursor_pos.x(), self.virtual_cursor_pos.y()
@@ -54,14 +61,13 @@ class SniperModeManager:
             if key == key_type and not event.isAutoRepeat():
                 if self.active:
                     self.active = False
-                    self._ghost_clear_counter = 3 # Bloquea máximo 3 eventos basura
+                    self._ghost_clear_counter = 3 
                     try:
                         widget.releaseMouse()
                         vpx = int(round(self.virtual_cursor_pos.x()))
                         vpy = int(round(self.virtual_cursor_pos.y()))
                         global_pos = widget.mapToGlobal(QtCore.QPoint(vpx, vpy))
                         
-                        # Guardamos la posición exacta donde Windows reanudará el control
                         self._release_pos = global_pos 
                         QtGui.QCursor.setPos(global_pos)
                     except Exception:
@@ -78,27 +84,23 @@ class SniperModeManager:
         if not self.active:
             if self._ghost_clear_counter > 0:
                 self._ghost_clear_counter -= 1
-                
-                # Buscamos el eco basándonos en la posición real de salida, no en el centro
                 dist_x = abs(current_physical_pos.x() - self._release_pos.x())
                 dist_y = abs(current_physical_pos.y() - self._release_pos.y())
                 
                 if dist_x < 50 and dist_y < 50:
-                    # Encontramos el eco esperado antes de agotar el contador. Apagamos seguridad.
                     self._ghost_clear_counter = 0 
                     return False, None, None, None
                 else:
-                    # Evento físico basura de antes de soltar la tecla. Se descarta.
                     return True, widget._mouse_wx, widget._mouse_wy, widget._mouse_in_img
-                    
             return False, None, None, None
             
-        # --- FILTRO 2: EVITAR EL DEADLOCK DEL ECO INTERNO ---
+        # --- FILTRO 2: EL PLANO BISECTOR (La Magia Matemática) ---
         if self._sync_pending:
-            dist_x = abs(current_physical_pos.x() - self._anchor_pos.x())
-            dist_y = abs(current_physical_pos.y() - self._anchor_pos.y())
+            dist_to_anchor_sq = (current_physical_pos.x() - self._anchor_pos.x())**2 + (current_physical_pos.y() - self._anchor_pos.y())**2
+            dist_to_source_sq = (current_physical_pos.x() - self._teleport_source.x())**2 + (current_physical_pos.y() - self._teleport_source.y())**2
             
-            if dist_x < 250 and dist_y < 250:
+            # Si el paquete de Windows está más cerca del Futuro (Ancla) que del Pasado (Fuente)
+            if dist_to_anchor_sq < dist_to_source_sq:
                 self._sync_pending = False
                 self._last_physical_pos = current_physical_pos
                 return True, self.virtual_cursor_pos.x(), self.virtual_cursor_pos.y(), True
@@ -144,6 +146,7 @@ class SniperModeManager:
         dist_y_wrap = abs(current_physical_pos.y() - self._anchor_pos.y())
         
         if dist_x_wrap > 250 or dist_y_wrap > 250:
+            self._teleport_source = current_physical_pos # Registramos el Pasado
             QtGui.QCursor.setPos(self._anchor_pos)
             self._sync_pending = True 
 
