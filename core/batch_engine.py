@@ -2,7 +2,7 @@ import os
 import gc
 import cv2
 import numpy as np
-from PyQt6 import QtCore
+from PyQt6 import QtCore, QtGui
 from core.processor import process_perspective_crop
 from core.output_fmt import export_image
 from utils.logger import setup_logger
@@ -18,7 +18,11 @@ class WorkerSignals(QtCore.QObject):
     finished = QtCore.pyqtSignal(str)          # Devuelve la ruta donde se guardó
     error = QtCore.pyqtSignal(str, str)        # Devuelve (nombre_archivo, mensaje_error)
 
-# EL OBRERO (Se ejecutara en 2do Plano)
+#Señales del precargador
+class PreloadWorkerSignals(QtCore.QObject):
+    finished = QtCore.pyqtSignal(object, object, str) #<- Emite (matriz_cruda, qimage_escalada, ruta)
+    error = QtCore.pyqtSignal(str, str)  #<- Emite (ruta_archivo, mensaje_error)
+
 class BatchWorker(QtCore.QRunnable):
     """
     Hilo trabajador que recorta y exporta la imagen en segundo plano.
@@ -120,3 +124,38 @@ class BatchManager(QtCore.QObject):
         total_processed = len(self.success_list) + len(self.error_list)
         if total_processed == len(self.image_files):
             self.batch_finished.emit(self.success_list, self.error_list)
+
+class PreloadWorker(QtCore.QRunnable):
+    '''Hilo dedicado exclusivamente a leer imágenes del disco en segundo plano 
+    para mantener el buffer de la RAM siempre lleno'''
+    def __init__(self, file_path: str, target_size: QtCore.QSize):
+        super().__init__()
+        self.file_path = file_path
+        self.target_size = target_size
+        self.signals = PreloadWorkerSignals()
+
+    @QtCore.pyqtSlot()
+    def run(self):
+        try:
+            img = cv2.imread(self.file_path)
+            if img is not None:
+                # 1. Convertimos colores para Qt
+                if img.ndim == 3 and img.shape[2] == 3:
+                    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    h, w, ch = rgb.shape
+                    # Usamos .copy() para desvincular la memoria de C++ a Python de forma segura
+                    qimg = QtGui.QImage(rgb.data, w, h, ch * w, QtGui.QImage.Format.Format_RGB888).copy()
+                elif img.ndim == 2:
+                    h, w = img.shape
+                    qimg = QtGui.QImage(img.data, w, h, w, QtGui.QImage.Format.Format_Grayscale8).copy()
+                else:
+                    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    h, w, ch = rgb.shape
+                    qimg = QtGui.QImage(rgb.data, w, h, ch * w, QtGui.QImage.Format.Format_RGB888).copy()
+                #Realizamos el reescalamiento, todo esto en segundo plano para no pausar la app
+                scaled_qimg = qimg.scaled(self.target_size, QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation)
+                self.signals.finished.emit(img, scaled_qimg, self.file_path)
+            else:
+                self.signals.error.emit(self.file_path, "OpenCV devolvió una matriz nula")
+        except Exception as e:
+            self.signals.error.emit(self.file_path, str(e))

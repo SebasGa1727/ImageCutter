@@ -1,12 +1,13 @@
 import sys
 import cv2
+import time
 import numpy as np
 import os
 import gc
 from PyQt6 import QtWidgets, QtGui, QtCore
 from PyQt6.QtCore import QThreadPool, QRunnable, pyqtSignal, QObject
 
-from core.batch_engine import BatchManager, BatchWorker
+from core.batch_engine import BatchManager, BatchWorker, PreloadWorker
 from core.processor import process_perspective_crop, rotate_image
 from core.output_pdf_fmt import export_to_pdf
 from image_canvas import ImageCanvas
@@ -60,7 +61,18 @@ class MainWindow(QtWidgets.QMainWindow):
 		#Procesamiento por lote implementado desde Batch_engine
 		self.is_batch_mode: bool = False
 		self.batch_manager = BatchManager()
-		self.thread_pool = QThreadPool()
+		#Gestores de hilos para precesamiento asincrono y lectura de imagen asincrona en 2 vias
+		self.cpu_pool = QThreadPool()
+		# Pool para lectura de disco, limitado a solo 1 nucleo
+		self.io_pool = QThreadPool()
+		self.io_pool.setMaxThreadCount(1)
+		#Buffer de cache - "Look ahead" para la lectura de la imagen futura
+		self.next_image_buffer: np.ndarray | None = None
+		self.next_image_path_buffer: str | None = None
+		self.next_image_error: tuple[str, str] | None = None
+		#Banderas de control de estado asincrono
+		self._is_preloading: bool = False
+		self._waiting_for_preload: bool = False
 		self.batch_manager.batch_finished.connect(self._on_batch_finished)
 		self.parent_folder_name: str = ""
 
@@ -125,13 +137,17 @@ class MainWindow(QtWidgets.QMainWindow):
 		# Cambiar a la vista del editor
 		self.stack.setCurrentIndex(1)
 
-
 	def on_four_points(self, pts) -> None:
 		# pts es un numpy.ndarray shape (4,2) en coordenadas de la imagen (float32)
 		print('4 puntos seleccionados (imagen coords):')
 		print(pts)
 		
 	def _on_enter_key(self) -> None:
+		#BUG
+		self._start_time = time.perf_counter()
+		print("\n" + "="*40)
+		print(f"[TIMER] -> ENTER presionado")
+		#BUG
 		# Ejecuta save_points si hay 4 puntos seleccionados
 		pts = self.canvas.get_points()
 		if pts.shape[0] == 4:
@@ -181,39 +197,147 @@ class MainWindow(QtWidgets.QMainWindow):
 				logger.info(f"Lote iniciado: {len(self.batch_manager.image_files)} fotos en cola")
 				#Asignamos la carpeta de salida para el TH
 				#Cargamos la primera foto
-				self._load_next_batch_image()
+				self._load_next_batch_image(force_sync= True)
 			else:
 				self.is_batch_mode = False
 				QtWidgets.QMessageBox.warning(self, "Error", "No se encontraron imagenes validas en la carpeta de entrada")
 				self._start_batch_workflow()
 
-	def _load_next_batch_image(self):
-		"""Pide la siguiente imagen al manager y la carga en el canvas"""
-		next_path =self.batch_manager.get_next_image()
-
-		if next_path:
-			img = cv2.imread(next_path)
+	def _load_next_batch_image(self, force_sync: bool = False):
+		"""Orquesta la extracción de imágenes, priorizando la memoria RAM (Buffer)."""
+		
+		# CASO A: Primera imagen o lectura forzada (I/O Síncrono)
+		if force_sync:
+			path = self.batch_manager.get_next_image()
+			if not path:
+				return
+			
+			img = cv2.imread(path)
 			if img is not None:
-				self.current_image_path = next_path
-				#Le pasamos la info al HUD
-				nombre_archivo = os.path.basename(next_path)
-				progreso = f"{self.batch_manager.current_index}/{len(self.batch_manager.image_files)}"
-				self.canvas.set_hud_info(nombre_archivo, progreso)
-				self.canvas.load_image(cv_image=img)
-				self.stack.setCurrentIndex(1)
+				self._render_image_to_canvas(path, img)
+				self._trigger_preload()
 			else:
-				logger.error(f"imagen corrupt: {next_path}", exc_info=True)
-				self.batch_manager.record_error(next_path, "No se pudo leer el archivo con OpenCV")
-				self._load_next_batch_image()
+				self.batch_manager.record_error(path, "Lectura síncrona fallida.")
+				self._load_next_batch_image(force_sync=True)
+			return
+
+		# CASO B: El usuario fue más rápido que el disco duro
+		if self._is_preloading:
+			# Levantamos la bandera de espera. El callback lo procesará en cuanto termine.
+			self._waiting_for_preload = True
+			QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+			return
+
+		# CASO C: Error en la precarga (Manejo de UX)
+		if self.next_image_error is not None:
+			err_path, err_msg = self.next_image_error
+			self.next_image_error = None # Vaciamos el error
+			
+			self.batch_manager.record_error(err_path, err_msg)
+			
+			msg_box = QtWidgets.QMessageBox(self)
+			msg_box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+			msg_box.setWindowTitle("Error en el archivo")
+			msg_box.setText(f"No se pudo leer la siguiente imagen:\n{err_path}\n\n¿Qué deseas hacer?")
+			
+			btn_continuar = msg_box.addButton("Continuar con la siguiente", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+			btn_abortar = msg_box.addButton("Abortar Lote", QtWidgets.QMessageBox.ButtonRole.RejectRole)
+			msg_box.exec()
+			
+			if msg_box.clickedButton() == btn_abortar:
+				self.cancel_operation(prompt_user=False)
+			else:
+				# Si decide continuar, forzamos lectura de la siguiente para brincarnos la corrupta
+				self._load_next_batch_image(force_sync=True)
+			return
+
+		# CASO D: Final del Lote (Buffer vacío y el hilo no está trabajando)
+		if self.next_image_buffer is None:
+			self._finish_batch_ui()
+			return
+
+		# CASO E: Swap de Memoria Instantáneo (Éxito Nominal)
+		#BUG
+		print("[DEBUG] ¡Éxito! Extrayendo siguiente imagen directo del BUFFER (RAM)")
+		#BUG
+		img, scaled_qimg = self.next_image_buffer
+		path = self.next_image_path_buffer
+		
+		# Propiedad estricta: Limpiamos el buffer para prevenir Memory Leaks
+		self.next_image_buffer = None
+		self.next_image_path_buffer = None
+		
+		self._render_image_to_canvas(path, img, scaled_qimg)
+		self._trigger_preload()
+
+	def _render_image_to_canvas(self, path: str, img: np.ndarray, scaled_qimg: QtGui.QImage = None):
+		"""Inyecta la matriz al canvas y actualiza el HUD"""
+		self.current_image_path = path
+		nombre_archivo = os.path.basename(path)
+		
+		# Calculamos el progreso basado en los archivos ya procesados en lugar del índice
+		procesados_actuales = len(self.batch_manager.success_list) + len(self.batch_manager.error_list) + 1
+		progreso = f"{procesados_actuales}/{len(self.batch_manager.image_files)}"
+		
+		self.canvas.set_hud_info(nombre_archivo, progreso)
+		self.canvas.load_image(cv_image=img, pre_scaled_qimage=scaled_qimg)
+		self.stack.setCurrentIndex(1)
+
+		#BUG
+		if hasattr(self, '_start_time'):
+			end_time = time.perf_counter()
+			elapsed_ms = (end_time - self._start_time) * 1000
+			print(f"[TIMER] -> Imagen pintada en el Canvas")
+			print(f"[METRICA] TIEMPO TOTAL DE TRANSICIÓN: {elapsed_ms:.2f} ms")
+			print("="*40)
+		#BUG
+
+	def _trigger_preload(self):
+		"""Calcula cuál es la siguiente foto y lanza el hilo de lectura."""
+		next_path = self.batch_manager.get_next_image()
+		
+		if next_path:
+			self._is_preloading = True
+			preload_worker = PreloadWorker(next_path, self.canvas.size())
+			preload_worker.signals.finished.connect(self._on_preload_success)
+			preload_worker.signals.error.connect(self._on_preload_error)
+			self.io_pool.start(preload_worker)
 		else:
-			#Si next_path es None, significa que la cola esta vacia
-			#Esperamos a que los hilos terminen anuncioando con un mensaje al usuario
-			# Mostramos un Pop-Up Indeterminado que NO tiene botón de cancelar ni de OK.
-			self.wait_dialog = QtWidgets.QProgressDialog("Guardando las últimas imágenes...", None, 0, 0, self)
-			self.wait_dialog.setWindowTitle("Procesando")
-			self.wait_dialog.setWindowModality(QtCore.Qt.WindowModality.WindowModal) # Bloquea la ventana detrás
-			self.wait_dialog.setCancelButton(None) # Le quitamos el botón cancelar
-			self.wait_dialog.show()
+			logger.info("Fin de la cola. No hay más imágenes para precargar.")
+
+	def _on_preload_success(self, img: object, scaled_qimg: object, path: str):
+		"""Callback asíncrono. Guarda la matriz en la RAM y gestiona la condición de carrera."""
+
+		self.next_image_buffer = (img, scaled_qimg)
+		self.next_image_path_buffer = path
+		self.next_image_error = None
+		self._is_preloading = False
+		
+		# Si el usuario estaba esperando, quitamos el reloj de arena y forzamos el cargado
+		if self._waiting_for_preload:
+			self._waiting_for_preload = False
+			QtWidgets.QApplication.restoreOverrideCursor()
+			self._load_next_batch_image()
+
+	def _on_preload_error(self, path: str, err_msg: str):
+		"""Callback asíncrono. Registra el fallo para ser notificado cuando el usuario llegue a esa foto."""
+		self.next_image_buffer = None
+		self.next_image_path_buffer = None
+		self.next_image_error = (path, err_msg)
+		self._is_preloading = False
+		
+		if self._waiting_for_preload:
+			self._waiting_for_preload = False
+			QtWidgets.QApplication.restoreOverrideCursor()
+			self._load_next_batch_image()
+
+	def _finish_batch_ui(self):
+		"""Despliega el diálogo de cierre esperando a que los obreros de la CPU terminen."""
+		self.wait_dialog = QtWidgets.QProgressDialog("Guardando las últimas imágenes...", None, 0, 0, self)
+		self.wait_dialog.setWindowTitle("Procesando")
+		self.wait_dialog.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+		self.wait_dialog.setCancelButton(None)
+		self.wait_dialog.show()
 
 	def _process_batch_image(self):
 		'''Procesa el trabajo de guardado de forma asincrona'''
@@ -222,21 +346,20 @@ class MainWindow(QtWidgets.QMainWindow):
 			return
 
 		pts = self.canvas.get_points().astype(np.float32)
-		cv_img_copy = self.canvas.cv_image.copy() #<-Copia de seguridad
 		file_path = self.current_image_path
 		#Extraemos solo el nombre de donde se extrajeron las imagenes para poder crear la misma carpeta en al salida
 		self.parent_folder_name = os.path.basename(os.path.dirname(self.current_image_path)) 
 		#Creamos al obrero
-		worker = BatchWorker(cv_img_copy, pts, file_path, self.parent_folder_name)
+		worker = BatchWorker(self.canvas.cv_image, pts, file_path, self.parent_folder_name)
 		#Conectamos las señales
 		worker.signals.finished.connect(self.batch_manager.record_success)
 		worker.signals.error.connect(self.batch_manager.record_error)
 		#Lo mandamos a un hilo aparte
-		self.thread_pool.start(worker)
+		self.cpu_pool.start(worker)
 		# Descargamos la imagen vieja del canvas. Esto borra la matriz principal 
 		# y el pixmap de la interfaz antes de leer la nueva desde el disco.
 		self.canvas.unload_image()
-		gc.collect()
+		QtCore.QTimer.singleShot(45, gc.collect)
 		#Cargamos la siguiente imagen
 		self._load_next_batch_image()
 
@@ -247,6 +370,11 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.canvas.unload_image()
 		self.current_image_path = None
 		self.is_batch_mode = False
+		#Limpieza de bufer post lote
+		self.next_image_buffer = None
+		self.next_image_path_buffer = None
+		self.next_image_error = None
+		gc.collect()
 
 		#Cargamos los datos de las listas
 		self.summary_view.load_summary_data(success_list, error_list)
@@ -260,7 +388,6 @@ class MainWindow(QtWidgets.QMainWindow):
 	def save_points(self) -> None:
 		"""Guarda la imagen procesada preguntando primero el destino.
 					(Procesamiento de una sola imagen)"""
-		
 		pts = self.canvas.get_points()
 		if pts.shape[0] != 4:
 			QtWidgets.QMessageBox.warning(self, 'Aviso', 'Faltan puntos (se requieren 4)')
@@ -278,7 +405,6 @@ class MainWindow(QtWidgets.QMainWindow):
 		except ValueError as e:
 			QtWidgets.QMessageBox.warning(self, 'Error', str(e) if str(e) else 'Dimensiones inválidas para el recorte')
 			return
-
 		'''Incluimos metodo de guardado a travez de "core/output_fmt.py"'''
 		#Configuramos la ruta de salida dependiendo preferencias de usuario
 		try:
@@ -312,7 +438,6 @@ class MainWindow(QtWidgets.QMainWindow):
 			#Extraemos solo el nombre de donde se extrajeron las imagenes para poder crear la misma carpeta en al salida
 			parent_folder_name = os.path.basename(os.path.dirname(self.current_image_path)) 
 
-		
 		# Delegamos la exportacion a core/output_fmt.py
 		try:
 			export_image(warped, base_name, parent_folder_name)
@@ -339,31 +464,38 @@ class MainWindow(QtWidgets.QMainWindow):
 			logger.error("Error al regresar a la pagina de inicio", exc_info=True)
 			QtWidgets.QMessageBox.warning(self, "Error", "No se pudo cargar la pagina de inicio, reinicie la aplicacion")
 	
-	def cancel_operation (self) -> None:
-		'''Aborto seguro del procesamiento
-		Confirma la operacion de aborto al usuario'''
-
-		answer = QtWidgets.QMessageBox.question(
-			self,
-			"Confirmar cancelacion",
-			"¿Estas seguro de cancelar el proceso actual y regresar a la pagina de inicio?\n" \
-			"Nota: En procesamiento por lote, esta accion solo afecta a la imagen actual.\n" \
-			"Las imagenes previas no se veran afectadas.",
-			QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No, 
-			QtWidgets.QMessageBox.StandardButton.No #<- Eleccion por defecto en caso de que se presione "enter"
-		)
-		if answer == QtWidgets.QMessageBox.StandardButton.No:
-			return
+	def cancel_operation (self, prompt_user: bool = True) -> None:
+		'''Aborto seguro del procesamiento'''
+		'''Confirma la operacion de aborto al usuario'''
+		if prompt_user:
+			answer = QtWidgets.QMessageBox.question(
+				self,
+				"Confirmar cancelacion",
+				"¿Estas seguro de cancelar el proceso actual y regresar a la pagina de inicio?\n" \
+				"Nota: En procesamiento por lote, esta accion solo afecta a la imagen actual.\n" \
+				"Las imagenes previas no se veran afectadas.",
+				QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No, 
+				QtWidgets.QMessageBox.StandardButton.No #<- Eleccion por defecto en caso de que se presione "enter"
+			)
+			if answer == QtWidgets.QMessageBox.StandardButton.No:
+				return
 		#Ejecutamos el codigo para limpiar el lienzo de forma correcta
 		try:
 			# Borramos la imagen de la memoria del Canvas
 			self.canvas.unload_image()
 			# Destruimos la referencia a la ruta original
 			self.current_image_path = None
+			#Desactivamos el modo lote
+			self.is_batch_mode = False
+			#Destruimos todo rastro de la memoria en espera
+			self.next_image_buffer = None
+			self.next_image_path_buffer = None
+			self.next_image_error = None
+			gc.collect()
 			# Cambiamos la vista a la pantalla Landing (índice 0)
 			self.stack.setCurrentIndex(0)
 
-			logger.info("Proceso cancelado por el usuario y redirijido a la paginia principal correctamente")
+			logger.info("Proceso cancelado y memorias liberadas, de vuelta en pagina de inicio")
 		except Exception:
 			logger.error("Error al critico al intentar cancelar la operacion", exc_info=True)
 			QtWidgets.QMessageBox.warning(self, "Error", "Error al limpiar la memoria, intente nuevamente")
@@ -404,7 +536,7 @@ class MainWindow(QtWidgets.QMainWindow):
 		pdf_worker.signals.finished.connect(self._on_pdf_success) 
 		pdf_worker.signals.error.connect(self._on_pdf_error) 
 
-		self.thread_pool.start(pdf_worker)
+		self.cpu_pool.start(pdf_worker)
 	
 	def _on_pdf_success(self, final_path: str):
 		if hasattr(self, 'pdf_wait_dialog') and self.pdf_wait_dialog:
@@ -434,7 +566,6 @@ def main() -> None:
 	mw.resize(1000, 700)
 	mw.showMaximized()
 	sys.exit(app.exec())
-
 
 if __name__ == '__main__':
 	main()
