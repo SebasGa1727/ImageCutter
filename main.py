@@ -359,7 +359,6 @@ class MainWindow(QtWidgets.QMainWindow):
 		# Descargamos la imagen vieja del canvas. Esto borra la matriz principal 
 		# y el pixmap de la interfaz antes de leer la nueva desde el disco.
 		self.canvas.unload_image()
-		QtCore.QTimer.singleShot(45, gc.collect)
 		#Cargamos la siguiente imagen
 		self._load_next_batch_image()
 
