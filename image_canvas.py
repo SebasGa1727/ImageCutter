@@ -67,8 +67,9 @@ class ImageCanvas(QtWidgets.QWidget):
         MAG_OFFSET = 60
         self._magnifier_enabled: bool = False
         self._magnifier = MagnifierTool(size=MAG_SIZE, zoom=MAG_ZOOM, border=MAG_BORDER, offset=MAG_OFFSET)
+       
         # Modo sniper/precisión
-        SNIPER_SENSITIVITY = 0.06
+        SNIPER_SENSITIVITY = 0.07
         self._sniper = SniperModeManager(sensitivity=SNIPER_SENSITIVITY)
 
 
@@ -82,15 +83,13 @@ class ImageCanvas(QtWidgets.QWidget):
         self.hud_progress = progress
 
     # ---------- Carga y conversión
-    def load_image(self, path: Optional[str] = None, cv_image: Optional[np.ndarray] = None) -> None:
-        """Recibe una matriz de OpenCV (BGR) y la prepara para renderizado visual.
-        El Canvas no lee archivos locales, solo procesa datos en memoria.
-        """
+    def load_image(self, cv_image: Optional[np.ndarray] = None, pre_scaled_qimage: Optional[QtGui.QImage] = None) -> None:
         if cv_image is None:
             raise ValueError("Se recibio un cv_image vacio o nulo")
-        # Copiamos la matriz para evitar que modificaciones externas dañen la vista
-        self.cv_image = cv_image.copy()
-        #Agregamos los valores del espacio de color de la imagen
+        
+        self.cv_image = cv_image
+        
+        # Color space para el HUD
         if self.cv_image.ndim == 3 and self.cv_image.shape[2] == 3:
             self.hud_colorspace = "BGR (Color Estándar)"
         elif self.cv_image.ndim == 3 and self.cv_image.shape[2] == 4:
@@ -99,16 +98,32 @@ class ImageCanvas(QtWidgets.QWidget):
             self.hud_colorspace = "Grayscale (Escala de Grises)"
         else:
             self.hud_colorspace = "Desconocido"
-        # Delegamos la conversión de colores BGR a RGB y a formato Qt
-        self._pixmap = _cv_to_qpixmap(self.cv_image)
-        # actualizar la referencia del manager
-        self._scaled_manager.set_pixmap(self._pixmap)
-        # actualizar caché escalado
-        self._update_scaled_pixmap_cache()
-        # Reiniciamos las herramientas de dibujo
+
+        # --- AHORA SÍ: LA CONDICIÓN ESTRICTA ---
+        if pre_scaled_qimage is not None:
+            # 1. Limpiamos cualquier rastro del pixmap pesado
+            self._pixmap = None
+            self._scaled_manager.set_pixmap(None)
+            
+            # 2. Le decimos al manager las dimensiones matemáticas originales
+            h, w = self.cv_image.shape[:2]
+            self._scaled_manager.set_explicit_dimensions(w, h)
+            
+            # 3. Inyectamos la imagen ya escalada
+            scaled_pixmap = QtGui.QPixmap.fromImage(pre_scaled_qimage)
+            widget_size = self.size()
+            left = (widget_size.width() - scaled_pixmap.width()) // 2
+            top = (widget_size.height() - scaled_pixmap.height()) // 2
+            
+            self._scaled_manager.inject_scaled_cache(scaled_pixmap, left, top)
+        else:
+            # Modo Lento: Solo se usa al abrir una foto manual (1x1) o sin lote
+            self._pixmap = _cv_to_qpixmap(self.cv_image)
+            self._scaled_manager.set_pixmap(self._pixmap)
+            self._update_scaled_pixmap_cache()
+
         self._point_manager.reset()
         self.update()
-
 
     def _create_cross_cursor(self, cross_len: int) -> QtGui.QCursor:
         """Crea un QCursor con una cruceta roja centrada."""
@@ -127,20 +142,17 @@ class ImageCanvas(QtWidgets.QWidget):
         painter.end()
         return QtGui.QCursor(pix, center, center)
 
-
     # ---------- Utilidades de mapeo coordenadas
     def _scaled_pixmap_and_offset(self) -> Tuple[Optional[QtGui.QPixmap], int, int]:
-        """Devuelve (scaled_pixmap, left, top) para centrar la imagen en el widget.
-        Usa caché `self._scaled_pixmap_cache` actualizada sólo en `load_image` y `resizeEvent`.
-        """
-        if self._pixmap is None:
-            return None, 0, 0
-
+        """Devuelve (scaled_pixmap, left, top) para centrar la imagen en el widget."""
         scaled, left, top = self._scaled_manager.get_scaled_and_offset()
+        
         if scaled is None:
+            # Si no hay caché, intentamos generarla. Si _pixmap es None, no hará nada.
             self._update_scaled_pixmap_cache()
-        return self._scaled_manager.get_scaled_and_offset()
-
+            return self._scaled_manager.get_scaled_and_offset()
+            
+        return scaled, left, top
 
     def _update_scaled_pixmap_cache(self) -> None:
         """Actualiza `self._scaled_pixmap_cache`, `left` y `top` en función
@@ -160,10 +172,13 @@ class ImageCanvas(QtWidgets.QWidget):
     def image_to_widget_coords(self, ix: float, iy: float) -> Optional[Tuple[int, int]]:
         return self._scaled_manager.image_to_widget_coords(ix, iy)
 
-    # NOTE: Rotations are handled in the core and orchestrated by MainWindow.
-
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
-        # Actualizar el pixmap escalado cuando cambia el tamaño del widget
+        # Si el usuario cambia el tamaño de la ventana a medio lote, 
+        # forzamos a crear el Pixmap pesado para recalcular sin perder calidad.
+        if self._pixmap is None and self.cv_image is not None:
+            self._pixmap = _cv_to_qpixmap(self.cv_image)
+            self._scaled_manager.set_pixmap(self._pixmap)
+            
         self._update_scaled_pixmap_cache()
         super().resizeEvent(event)
         self.update()
@@ -316,13 +331,13 @@ class ImageCanvas(QtWidgets.QWidget):
     # ---------- Pintado
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
         painter = QtGui.QPainter(self)
-        painter.fillRect(self.rect(), QtGui.QColor(30, 30, 30))
-
-        if self._pixmap is None:
-            return
+        painter.fillRect(self.rect(), QtGui.QColor(0, 0, 0))
 
         scaled, left, top = self._scaled_pixmap_and_offset()
-        assert scaled is not None
+        if scaled is None:
+            painter.end()
+            return
+
         painter.drawPixmap(left, top, scaled)
         # dibujar crucetas rojas finas (sin numeración)
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
@@ -443,7 +458,6 @@ class ImageCanvas(QtWidgets.QWidget):
             painter.drawText(25, 85, f"Progreso: {self.hud_progress}")
 
         painter.end()
-
 
 if __name__ == "__main__":
     # pequeño sanity-check si se ejecuta como script

@@ -8,7 +8,6 @@ from ui.views.settings_dialog import SettingsDialog
 
 logger = setup_logger(__name__)
 
-
 class LandingView(QtWidgets.QWidget):
     """Vista de bienvenida reutilizable que emite señales de navegación.
 
@@ -68,7 +67,7 @@ class LandingView(QtWidgets.QWidget):
         layout.addWidget(welcome)
         layout.addSpacing(15)
         layout.addWidget(label)
-        layout.addSpacing(70)
+        layout.addSpacing(65)
         layout.addWidget(btn_image, alignment=QtCore.Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(btn_batch, alignment=QtCore.Qt.AlignmentFlag.AlignHCenter)
         layout.addStretch(1)
@@ -86,7 +85,7 @@ class LandingView(QtWidgets.QWidget):
                 font-size: 20pt;
             }
             QToolButton:hover {
-                background-color: rgba(37, 37, 37, 0.06);
+                background-color: rgb(0, 0, 0);
                 border-radius: 6px;
             }
         ''')
