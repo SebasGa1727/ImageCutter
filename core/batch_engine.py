@@ -9,7 +9,6 @@ from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-
 # SEÑALES DEL OBRERO
 
 # Los QRunnable no pueden emitir señales directamente, 
@@ -76,26 +75,13 @@ class BatchManager(QtCore.QObject):
         # Estadísticas para el resumen final
         self.success_list: list[str] = []
         self.error_list: list[tuple[str, str]] = []
-        
-        # Extensiones válidas
-        self.valid_extensions = {'.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.cr2'}
 
-    def load_directory(self, input_dir: str) -> bool:
-        """Escanea la carpeta de entrada y crea la lista de trabajo"""
-        self.image_files = []
+    def set_files(self, final_list: list[str])-> bool:
+        """Carga directamente una lista de archivos procesados y autorizados por el ProxyEngine."""
+        self.image_files = final_list
         self.current_index = 0
         self.success_list = []
         self.error_list = []
-
-        if not os.path.isdir(input_dir):
-            return False
-
-        for file in os.listdir(input_dir):
-            ext = os.path.splitext(file)[1].lower()
-            if ext in self.valid_extensions:
-                self.image_files.append(os.path.join(input_dir, file))
-        
-        # Retorna True si encontró al menos 1 foto válida
         return len(self.image_files) > 0
 
     def get_next_image(self) -> str | None:
