@@ -96,7 +96,7 @@ def export_image(cv_image: np.ndarray, base_filename: str, parent_folder_name: s
         # Guardamos inyectando los metadatos (DPI y Calidad)
         pil_img.save(out_path, format=pil_format, quality=quality, dpi=(dpi, dpi))
 
-        logger.info(f"Imagen exportada con exito: {out_path} ({new_w} x {new_h} a {dpi} DPI)")
+        logger.info(f"Imagen exportada con exito")
 
         return out_path
     
@@ -147,7 +147,7 @@ def export_th(cv_image: np.ndarray, base_filename: str, parent_folder_name: str 
         # Guardamos inyectando los metadatos (DPI y Calidad)
         pil_img.save(out_path, format=pil_format, quality=quality, dpi=(dpi, dpi))
 
-        logger.info(f"TH Exportado con exito: {out_path} ({new_w} x {new_h} a {dpi} DPI)")
+        logger.info(f"TH Exportado con exito")
 
         return out_path
     

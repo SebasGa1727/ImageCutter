@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -317,8 +317,6 @@ class ImageCanvas(QtWidgets.QWidget):
         """
         self.cv_image = None
         self._pixmap = None
-        # reset manager cache
-        # Reset scaled manager cache
         self._scaled_manager.set_pixmap(None)
 
         self._point_manager.reset()

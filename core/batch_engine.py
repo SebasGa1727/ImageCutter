@@ -1,4 +1,3 @@
-import os
 import gc
 import cv2
 import numpy as np
@@ -6,9 +5,14 @@ from PyQt6 import QtCore, QtGui
 from core.processor import process_perspective_crop
 from core.output_fmt import export_image
 from utils.logger import setup_logger
+from utils.fmt_config import config_manager
+try:
+    from core.AI_exporter import export_yolo_data
+    AI_EXPORTER_AVAILABLE = True
+except ImportError:
+    AI_EXPORTER_AVAILABLE = False
 
 logger = setup_logger(__name__)
-
 
 # SEÑALES DEL OBRERO
 
@@ -47,8 +51,13 @@ class BatchWorker(QtCore.QRunnable):
             # Nota: output_fmt ya sabe dónde guardar gracias a que actualizamos el JSON en el diálogo
             out_path = export_image(warped, self.file_name, self.parent_folder_name)
             
-            # TODO:
-            '''3. (Futuro) Aquí agregaremos la exportación a IA'''
+            # Plugin de IA
+            if AI_EXPORTER_AVAILABLE and config_manager.get("ai_export", "yolo_enabled"):
+                try:
+                    # Le pasamos la imagen original (antes del recorte), los 4 puntos y el nombre
+                    export_yolo_data(self.cv_image, self.points, self.file_name, self.parent_folder_name)
+                except Exception:
+                    logger.error(f"Error interno en AI_exporter procesando {self.file_name}", exc_info=True)
             
             # Avisamos que terminamos exitosamente
             self.signals.finished.emit(out_path)
@@ -76,26 +85,13 @@ class BatchManager(QtCore.QObject):
         # Estadísticas para el resumen final
         self.success_list: list[str] = []
         self.error_list: list[tuple[str, str]] = []
-        
-        # Extensiones válidas
-        self.valid_extensions = {'.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.cr2'}
 
-    def load_directory(self, input_dir: str) -> bool:
-        """Escanea la carpeta de entrada y crea la lista de trabajo"""
-        self.image_files = []
+    def set_files(self, final_list: list[str])-> bool:
+        """Carga directamente una lista de archivos procesados y autorizados por el ProxyEngine."""
+        self.image_files = final_list
         self.current_index = 0
         self.success_list = []
         self.error_list = []
-
-        if not os.path.isdir(input_dir):
-            return False
-
-        for file in os.listdir(input_dir):
-            ext = os.path.splitext(file)[1].lower()
-            if ext in self.valid_extensions:
-                self.image_files.append(os.path.join(input_dir, file))
-        
-        # Retorna True si encontró al menos 1 foto válida
         return len(self.image_files) > 0
 
     def get_next_image(self) -> str | None:

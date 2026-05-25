@@ -1,6 +1,5 @@
 import sys
 import cv2
-import time
 import numpy as np
 import os
 import gc
@@ -10,6 +9,7 @@ from PyQt6.QtCore import QThreadPool, QRunnable, pyqtSignal, QObject
 from core.batch_engine import BatchManager, BatchWorker, PreloadWorker
 from core.processor import process_perspective_crop, rotate_image
 from core.output_pdf_fmt import export_to_pdf
+from core.proxy_engine import ProxyManager
 from image_canvas import ImageCanvas
 from ui.views.landing_view import LandingView
 from utils.logger import setup_logger
@@ -57,6 +57,13 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.stack.addWidget(self.summary_view)
 		self.setCentralWidget(self.stack)
 		self.current_image_path: str | None = None
+
+		# Motor de proxies
+		self.proxy_manager = ProxyManager()
+		self.proxy_manager.progress.connect(self._on_proxy_progress)
+		self.proxy_manager.finished.connect(self._on_proxy_finished)
+		self.proxy_manager.error.connect(self._on_proxy_error)
+		self.proxy_wait_dialog = None
 
 		#Procesamiento por lote implementado desde Batch_engine
 		self.is_batch_mode: bool = False
@@ -120,10 +127,57 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.stack.setCurrentIndex(0)
 		self.update_toolbar_state(False)
 
+	#Metodos del proxy
+	def _on_proxy_progress(self, actuales: int, totales: int, mensaje: str):
+		'''Recibe actualizaciones del obrero de la bobeda'''
+		if hasattr(self, 'proxy_wait_dialog') and self.proxy_wait_dialog:
+			self.proxy_wait_dialog.setMaximum(totales)
+			self.proxy_wait_dialog.setValue(actuales)
+			self.proxy_wait_dialog.setLabelText(mensaje)
+
+	def _on_proxy_finished(self, final_list: list[str]):
+		'''Se ejecuta cuando la bobeda termino de procesar todas las imagenes'''
+		#Quitamos la pantalla de carga
+		if hasattr(self, 'proxy_wait_dialog') and self.proxy_wait_dialog:
+			try:
+				self.proxy_wait_dialog.canceled.disconnect()
+			except Exception:
+				pass
+			self.proxy_wait_dialog.close()
+			self.proxy_wait_dialog = None
+		
+		#Pasamos la lista limpia de puros jpg
+		if self.batch_manager.set_files(final_list):
+			self.is_batch_mode = True
+			logger.info(f"Lote iniciado: {len(self.batch_manager.image_files)} fotos en cola")
+			self._load_next_batch_image(force_sync= True)
+		else:
+			self.is_batch_mode = False
+			QtWidgets.QMessageBox.warning(self, "Aviso", "No se encontraron imágenes válidas en la carpeta.")
+
+	def _on_proxy_error(self, err_msg: str):
+		'''Error de procesamiento de proxys'''
+		if hasattr(self, 'proxy_wait_dialog') and self.proxy_wait_dialog:
+			try:
+				self.proxy_wait_dialog.canceled.disconnect()
+			except Exception:
+				pass
+			self.proxy_wait_dialog.close()
+			self.proxy_wait_dialog = None
+		QtWidgets.QMessageBox.critical(self, "Error de Carpeta", err_msg)	
+
+	def _cancel_proxies(self):
+		'''Proceso si el usuario cancela mientras se crea el proxy'''
+		if hasattr(self, 'proxy_wait_dialog') and self.proxy_wait_dialog:
+			self.proxy_wait_dialog.close()
+			self.proxy_wait_dialog = None
+		self.is_batch_mode = False
+		logger.info("El usuario canceló la generación de proxies.")
+
 	def load_image(self, path: str | None = None) -> None:
 		# Si se proporciona `path`, úsalo; si no, abrir dialogo de archivo
 		if path is None:
-			fname, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Abrir imagen', 'input', 'Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)')
+			fname, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Abrir imagen', 'input', 'Images (*.png *.jpg *.jpeg *.bmp *.cr2 *.tif *.tiff)')
 			if not fname:
 				return
 		else:
@@ -136,18 +190,8 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.canvas.load_image(cv_image=img)
 		# Cambiar a la vista del editor
 		self.stack.setCurrentIndex(1)
-
-	def on_four_points(self, pts) -> None:
-		# pts es un numpy.ndarray shape (4,2) en coordenadas de la imagen (float32)
-		print('4 puntos seleccionados (imagen coords):')
-		print(pts)
 		
 	def _on_enter_key(self) -> None:
-		#BUG
-		self._start_time = time.perf_counter()
-		print("\n" + "="*40)
-		print(f"[TIMER] -> ENTER presionado")
-		#BUG
 		# Ejecuta save_points si hay 4 puntos seleccionados
 		pts = self.canvas.get_points()
 		if pts.shape[0] == 4:
@@ -190,18 +234,19 @@ class MainWindow(QtWidgets.QMainWindow):
 		dialog = BatchSetupDialog(self)
 		if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
 			carpeta_entrada, carpeta_salida = dialog.get_directories()
-			
-			# Le damos la carpeta al administrador de carpetas
-			if self.batch_manager.load_directory(carpeta_entrada):
-				self.is_batch_mode = True
-				logger.info(f"Lote iniciado: {len(self.batch_manager.image_files)} fotos en cola")
-				#Asignamos la carpeta de salida para el TH
-				#Cargamos la primera foto
-				self._load_next_batch_image(force_sync= True)
-			else:
-				self.is_batch_mode = False
-				QtWidgets.QMessageBox.warning(self, "Error", "No se encontraron imagenes validas en la carpeta de entrada")
-				self._start_batch_workflow()
+			self.parent_folder_name = os.path.basename(os.path.normpath(carpeta_entrada))
+
+			# Lanzamos el Diálogo nativo de carga. (Luego lo cambiaremos por la UI bonita)
+			self.proxy_wait_dialog = QtWidgets.QProgressDialog("Analizando bóveda de archivos...", "Cancelar", 0, 100, self)
+			self.proxy_wait_dialog.setWindowTitle("Configurando entorno seguro")
+			self.proxy_wait_dialog.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+			self.proxy_wait_dialog.setAutoClose(False)
+			self.proxy_wait_dialog.setAutoReset(False)
+			self.proxy_wait_dialog.canceled.connect(self._cancel_proxies)
+			self.proxy_wait_dialog.show()
+
+			# Mandamos al orquestador a escanear y generar proxies de ser necesario
+			self.proxy_manager.process_directory(carpeta_entrada)
 
 	def _load_next_batch_image(self, force_sync: bool = False):
 		"""Orquesta la extracción de imágenes, priorizando la memoria RAM (Buffer)."""
@@ -257,9 +302,6 @@ class MainWindow(QtWidgets.QMainWindow):
 			return
 
 		# CASO E: Swap de Memoria Instantáneo (Éxito Nominal)
-		#BUG
-		print("[DEBUG] ¡Éxito! Extrayendo siguiente imagen directo del BUFFER (RAM)")
-		#BUG
 		img, scaled_qimg = self.next_image_buffer
 		path = self.next_image_path_buffer
 		
@@ -283,15 +325,6 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.canvas.load_image(cv_image=img, pre_scaled_qimage=scaled_qimg)
 		self.stack.setCurrentIndex(1)
 
-		#BUG
-		if hasattr(self, '_start_time'):
-			end_time = time.perf_counter()
-			elapsed_ms = (end_time - self._start_time) * 1000
-			print(f"[TIMER] -> Imagen pintada en el Canvas")
-			print(f"[METRICA] TIEMPO TOTAL DE TRANSICIÓN: {elapsed_ms:.2f} ms")
-			print("="*40)
-		#BUG
-
 	def _trigger_preload(self):
 		"""Calcula cuál es la siguiente foto y lanza el hilo de lectura."""
 		next_path = self.batch_manager.get_next_image()
@@ -303,7 +336,7 @@ class MainWindow(QtWidgets.QMainWindow):
 			preload_worker.signals.error.connect(self._on_preload_error)
 			self.io_pool.start(preload_worker)
 		else:
-			logger.info("Fin de la cola. No hay más imágenes para precargar.")
+			logger.info("No hay más imágenes para precargar.")
 
 	def _on_preload_success(self, img: object, scaled_qimg: object, path: str):
 		"""Callback asíncrono. Guarda la matriz en la RAM y gestiona la condición de carrera."""
@@ -347,8 +380,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
 		pts = self.canvas.get_points().astype(np.float32)
 		file_path = self.current_image_path
-		#Extraemos solo el nombre de donde se extrajeron las imagenes para poder crear la misma carpeta en al salida
-		self.parent_folder_name = os.path.basename(os.path.dirname(self.current_image_path)) 
 		#Creamos al obrero
 		worker = BatchWorker(self.canvas.cv_image, pts, file_path, self.parent_folder_name)
 		#Conectamos las señales
@@ -359,7 +390,6 @@ class MainWindow(QtWidgets.QMainWindow):
 		# Descargamos la imagen vieja del canvas. Esto borra la matriz principal 
 		# y el pixmap de la interfaz antes de leer la nueva desde el disco.
 		self.canvas.unload_image()
-		QtCore.QTimer.singleShot(45, gc.collect)
 		#Cargamos la siguiente imagen
 		self._load_next_batch_image()
 
@@ -415,13 +445,10 @@ class MainWindow(QtWidgets.QMainWindow):
 			if use_preset_dir and pre_set_output_dir:
 				folder_path = pre_set_output_dir
 			
-			elif pre_set_output_dir:
-				folder_path = QtWidgets.QFileDialog.getExistingDirectory(self, "Seleccionar carpeta para guardar recortes", pre_set_output_dir)
-				#Por si el usuario presiona "cancelar" 
-				if not folder_path:
-					return
 			else:
-				folder_path = QtWidgets.QFileDialog.getExistingDirectory(self, "Seleccionar carpeta para guardar recortes", pre_set_output_dir or last_dir)
+				# Si no hay preset estricto, abrimos el diálogo apuntando a la última ruta conocida
+				directorio_inicial = pre_set_output_dir if pre_set_output_dir else last_dir
+				folder_path = QtWidgets.QFileDialog.getExistingDirectory(self, "Seleccionar carpeta para guardar recortes", directorio_inicial)
 				if not folder_path:
 					return
 			
@@ -510,7 +537,7 @@ class MainWindow(QtWidgets.QMainWindow):
 			ordered_paths.append(real_path)
 
 		if with_th and th_image_path:
-			logger.info(f"El usuario creo th para {th_image_path}")
+			logger.info(f"El usuario creo TH para su lote")
 			try:
 				img_to_th = cv2.imread(th_image_path)
 				if img_to_th is not None:
