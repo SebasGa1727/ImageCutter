@@ -191,18 +191,8 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.canvas.load_image(cv_image=img)
 		# Cambiar a la vista del editor
 		self.stack.setCurrentIndex(1)
-
-	def on_four_points(self, pts) -> None:
-		# pts es un numpy.ndarray shape (4,2) en coordenadas de la imagen (float32)
-		print('4 puntos seleccionados (imagen coords):')
-		print(pts)
 		
 	def _on_enter_key(self) -> None:
-		#BUG
-		self._start_time = time.perf_counter()
-		print("\n" + "="*40)
-		print(f"[TIMER] -> ENTER presionado")
-		#BUG
 		# Ejecuta save_points si hay 4 puntos seleccionados
 		pts = self.canvas.get_points()
 		if pts.shape[0] == 4:
@@ -313,9 +303,6 @@ class MainWindow(QtWidgets.QMainWindow):
 			return
 
 		# CASO E: Swap de Memoria Instantáneo (Éxito Nominal)
-		#BUG
-		print("[DEBUG] ¡Éxito! Extrayendo siguiente imagen directo del BUFFER (RAM)")
-		#BUG
 		img, scaled_qimg = self.next_image_buffer
 		path = self.next_image_path_buffer
 		
@@ -338,15 +325,6 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.canvas.set_hud_info(nombre_archivo, progreso)
 		self.canvas.load_image(cv_image=img, pre_scaled_qimage=scaled_qimg)
 		self.stack.setCurrentIndex(1)
-
-		#BUG
-		if hasattr(self, '_start_time'):
-			end_time = time.perf_counter()
-			elapsed_ms = (end_time - self._start_time) * 1000
-			print(f"[TIMER] -> Imagen pintada en el Canvas")
-			print(f"[METRICA] TIEMPO TOTAL DE TRANSICIÓN: {elapsed_ms:.2f} ms")
-			print("="*40)
-		#BUG
 
 	def _trigger_preload(self):
 		"""Calcula cuál es la siguiente foto y lanza el hilo de lectura."""

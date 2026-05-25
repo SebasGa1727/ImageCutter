@@ -6,6 +6,12 @@ from PyQt6 import QtCore, QtGui
 from core.processor import process_perspective_crop
 from core.output_fmt import export_image
 from utils.logger import setup_logger
+from utils.fmt_config import config_manager
+try:
+    from core.AI_exporter import export_yolo_data
+    AI_EXPORTER_AVAILABLE = True
+except ImportError:
+    AI_EXPORTER_AVAILABLE = False
 
 logger = setup_logger(__name__)
 
@@ -46,8 +52,13 @@ class BatchWorker(QtCore.QRunnable):
             # Nota: output_fmt ya sabe dónde guardar gracias a que actualizamos el JSON en el diálogo
             out_path = export_image(warped, self.file_name, self.parent_folder_name)
             
-            # TODO:
-            '''3. (Futuro) Aquí agregaremos la exportación a IA'''
+            # Plugin de IA
+            if AI_EXPORTER_AVAILABLE and config_manager.get("ai_export", "yolo_enabled"):
+                try:
+                    # Le pasamos la imagen original (antes del recorte), los 4 puntos y el nombre
+                    export_yolo_data(self.cv_image, self.points, self.file_name, self.parent_folder_name)
+                except Exception:
+                    logger.error(f"Error interno en AI_exporter procesando {self.file_name}", exc_info=True)
             
             # Avisamos que terminamos exitosamente
             self.signals.finished.emit(out_path)
