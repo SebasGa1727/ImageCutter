@@ -50,7 +50,7 @@ def export_to_pdf(ordered_paths: list[str], output_filename: str) -> str:
 
         # ABRIMOS EL CANAL DIRECTO AL DISCO DURO (Modo wb = Write Binary)
         # Esto crea el archivo PDF vacío.
-        logger.info(f"Iniciando flujo de escritura PDF en: {out_path}")
+        logger.info(f"Iniciando escritura de PDF")
         with open(out_path, "wb") as pdf_file:
             #img2pdf procesa el generador e inyecta directamente al disco.
             pdf_bytes = img2pdf.convert(compressed_images)

@@ -2,7 +2,11 @@ import os
 import gc
 import cv2
 import time
-import rawpy
+try:
+    import rawpy
+    RAWPY_AVAILABLE = True
+except ImportError:
+    RAWPY_AVAILABLE = False
 import tempfile
 from PyQt6 import QtCore
 from PIL import Image
@@ -31,8 +35,11 @@ class ProxyWorker(QtCore.QRunnable):
             
             proxy_path = os.path.join(self.temp_dir, f"{name_no_ext}.jpg")
 
-            # PROCESO CR2 (Calidad Premium 100% Resolución)
+            # PROCESO CR2   
             if ext == '.cr2':
+                if not RAWPY_AVAILABLE:
+                    raise ImportError("Librería rawpy no instalada.")
+                
                 max_retries = 3
                 for attempt in range(max_retries):
                     try:

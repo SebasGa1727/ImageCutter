@@ -65,12 +65,17 @@ def export_yolo_data(cv_image: np.ndarray, points: np.ndarray, base_filename: st
         with open(txt_path, 'w', encoding='utf-8') as f:
             f.write(yolo_line)
             
-        # --- 2. EXTRACCIÓN DE LA FOTO (640px) ---
-        # OpenCV usa (ancho, alto) para el resize
-        img_640 = cv2.resize(cv_image, (640, 640), interpolation=cv2.INTER_AREA)
+        # --- 2. EXTRACCIÓN DE LA FOTO (manteniendo proporcion) ---
+        # Se calcula la propocion  para que el lado mas largo dea 640px
+        max_edge = 640
+        ratio = max_edge / float(max(img_w, img_h))
+        new_w = int(round(img_w * ratio))
+        new_h = int(round(img_h * ratio))
+
+        img_640 = cv2.resize(cv_image, (new_w, new_h), interpolation=cv2.INTER_AREA)
         cv2.imwrite(img_path, img_640, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
             
-        logger.info(f"Par YOLO generado sigilosamente: {name_no_ext}")
+        logger.info(f"IA info Generado exitosamente: {name_no_ext}")
         return True
         
     except Exception:

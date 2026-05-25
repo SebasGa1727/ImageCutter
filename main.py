@@ -1,6 +1,5 @@
 import sys
 import cv2
-import time
 import numpy as np
 import os
 import gc
@@ -337,7 +336,7 @@ class MainWindow(QtWidgets.QMainWindow):
 			preload_worker.signals.error.connect(self._on_preload_error)
 			self.io_pool.start(preload_worker)
 		else:
-			logger.info("Fin de la cola. No hay más imágenes para precargar.")
+			logger.info("No hay más imágenes para precargar.")
 
 	def _on_preload_success(self, img: object, scaled_qimg: object, path: str):
 		"""Callback asíncrono. Guarda la matriz en la RAM y gestiona la condición de carrera."""
@@ -446,13 +445,10 @@ class MainWindow(QtWidgets.QMainWindow):
 			if use_preset_dir and pre_set_output_dir:
 				folder_path = pre_set_output_dir
 			
-			elif pre_set_output_dir:
-				folder_path = QtWidgets.QFileDialog.getExistingDirectory(self, "Seleccionar carpeta para guardar recortes", pre_set_output_dir)
-				#Por si el usuario presiona "cancelar" 
-				if not folder_path:
-					return
 			else:
-				folder_path = QtWidgets.QFileDialog.getExistingDirectory(self, "Seleccionar carpeta para guardar recortes", pre_set_output_dir or last_dir)
+				# Si no hay preset estricto, abrimos el diálogo apuntando a la última ruta conocida
+				directorio_inicial = pre_set_output_dir if pre_set_output_dir else last_dir
+				folder_path = QtWidgets.QFileDialog.getExistingDirectory(self, "Seleccionar carpeta para guardar recortes", directorio_inicial)
 				if not folder_path:
 					return
 			
@@ -541,7 +537,7 @@ class MainWindow(QtWidgets.QMainWindow):
 			ordered_paths.append(real_path)
 
 		if with_th and th_image_path:
-			logger.info(f"El usuario creo th para {th_image_path}")
+			logger.info(f"El usuario creo TH para su lote")
 			try:
 				img_to_th = cv2.imread(th_image_path)
 				if img_to_th is not None:

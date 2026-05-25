@@ -295,7 +295,7 @@ class SettingsDialog(QtWidgets.QDialog):
             config_manager.set("export_pdf", "quality", self.pdf_quality.value())
             config_manager.set("ai_export", "yolo_enabled", self.ai_yolo_check.isChecked())
             
-            logger.info("Configuraciones generales guardadas correctamente.")
+            logger.info("Configuraciones guardadas correctamente.")
             self.accept() 
         except Exception:
             logger.error("Error al guardar settings.json", exc_info=True)
