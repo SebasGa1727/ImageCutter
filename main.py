@@ -143,7 +143,8 @@ class MainWindow(QtWidgets.QMainWindow):
 				self.proxy_wait_dialog.canceled.disconnect()
 			except Exception:
 				pass
-			self.proxy_wait_dialog.close()
+			self.proxy_wait_dialog.hide()
+			self.proxy_wait_dialog.deleteLater()
 			self.proxy_wait_dialog = None
 		
 		#Pasamos la lista limpia de puros jpg
@@ -162,14 +163,19 @@ class MainWindow(QtWidgets.QMainWindow):
 				self.proxy_wait_dialog.canceled.disconnect()
 			except Exception:
 				pass
-			self.proxy_wait_dialog.close()
+			self.proxy_wait_dialog.hide()
+			self.proxy_wait_dialog.deleteLater()
 			self.proxy_wait_dialog = None
 		QtWidgets.QMessageBox.critical(self, "Error de Carpeta", err_msg)	
 
 	def _cancel_proxies(self):
 		'''Proceso si el usuario cancela mientras se crea el proxy'''
+		self.proxy_manager.cancel()
+		self.cancel_operation(prompt_user=False)
+
 		if hasattr(self, 'proxy_wait_dialog') and self.proxy_wait_dialog:
-			self.proxy_wait_dialog.close()
+			self.proxy_wait_dialog.hide()
+			self.proxy_wait_dialog.deleteLater()
 			self.proxy_wait_dialog = None
 		self.is_batch_mode = False
 		logger.info("El usuario canceló la generación de proxies.")
@@ -238,7 +244,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
 			# Lanzamos el Diálogo nativo de carga. (Luego lo cambiaremos por la UI bonita)
 			self.proxy_wait_dialog = QtWidgets.QProgressDialog("Analizando bóveda de archivos...", "Cancelar", 0, 100, self)
-			self.proxy_wait_dialog.setWindowTitle("Configurando entorno seguro")
+			self.proxy_wait_dialog.setWindowTitle("Convirtiendo imagenes a JPG")
 			self.proxy_wait_dialog.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
 			self.proxy_wait_dialog.setAutoClose(False)
 			self.proxy_wait_dialog.setAutoReset(False)

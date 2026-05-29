@@ -19,15 +19,20 @@ class ProxyWorkerSignals(QtCore.QObject):
     error = QtCore.pyqtSignal(int, str, str)
 
 class ProxyWorker(QtCore.QRunnable):
-    def __init__(self, original_path: str, temp_dir: str, index: int):
+    def __init__(self, original_path: str, temp_dir: str, index: int, check_cancel_func):
         super().__init__()
         self.original_path = original_path
         self.temp_dir = temp_dir
         self.index = index
+        self.check_cancel = check_cancel_func
         self.signals = ProxyWorkerSignals()
 
     @QtCore.pyqtSlot()
     def run(self):
+        #Verificamos si el proceso ha sido cancelado o no
+        if self.check_cancel:
+            return
+
         try:
             ext = os.path.splitext(self.original_path)[1].lower()
             base_name = os.path.basename(self.original_path)
@@ -43,18 +48,31 @@ class ProxyWorker(QtCore.QRunnable):
                 max_retries = 3
                 for attempt in range(max_retries):
                     try:
+                        # verificacion de cancelacion por si tardo o volvio a verificar una segunda ocacion
+                        if self.check_cancel:
+                            return
+                        
                         with rawpy.imread(self.original_path) as raw:
-                            # SIN half_size=True. Revela a resolución masiva completa.
-                            rgb = raw.postprocess(use_camera_wb=True) 
+                            # Configuración de Revelado de Grado Profesional
+                            rgb = raw.postprocess(
+                                use_camera_wb=True,                                 # Respeta el balance de blancos de la cámara
+                                no_auto_bright=True,                                # APAGA el auto-brillo (Evita que el papel se queme o se lave)
+                                exp_shift=7.0,                                      # "Perilla" para subir la luz de forma limpia 
+                                noise_thr=450.0,                                    # Destructor de "confeti"- Valores altos (ej. 500) eliminan el confeti de colores sin borrar las letras.
+                                highlight_mode=rawpy.HighlightMode.Blend,           # Mezcla canales para recuperar texto en zonas brillantes
+                                output_color=rawpy.ColorSpace.sRGB,                 # Fuerza el estándar web/pantalla
+                                gamma=(2.222, 4.5),                                 # Aplica curva gamma humana natural
+                                demosaic_algorithm=rawpy.DemosaicAlgorithm.AAHD     # Elimina las "Escaleras" que se generan en las letras
+                            ) 
                             pil_img = Image.fromarray(rgb)
                             
-                            # Eliminamos el limitador de max_edge. Guardamos calidad al 95%
+                            # Calidad 90% 
                             pil_img.save(proxy_path, 'JPEG', quality=90)
                             
                             del pil_img
                             del rgb
                             gc.collect()
-                        break 
+                        break
                     
                     except Exception as e:
                         if attempt < max_retries - 1:
@@ -68,6 +86,10 @@ class ProxyWorker(QtCore.QRunnable):
                 max_retries = 3
                 for attempt in range(max_retries):
                     try:
+                        # Verificacion de cancelamiento
+                        if self.check_cancel():
+                            return
+                        
                         img = cv2.imread(self.original_path)
                         if img is None:
                             raise ValueError("OpenCV devolvió una matriz nula al leer el TIFF")
@@ -81,7 +103,7 @@ class ProxyWorker(QtCore.QRunnable):
                         
                         pil_img = Image.fromarray(rgb_img)
                         
-                        # Eliminamos el limitador de max_edge. Guardamos calidad al 95%
+                        # Guardamos calidad al 95%
                         pil_img.save(proxy_path, 'JPEG', quality=90)
                         
                         del pil_img
@@ -96,8 +118,9 @@ class ProxyWorker(QtCore.QRunnable):
                             time.sleep(0.5)
                         else:
                             raise e
-
-            self.signals.finished.emit(self.index, proxy_path)
+            # Solo avisa que terminó si nadie lo canceló
+            if not self.check_cancel():
+                self.signals.finished.emit(self.index, proxy_path)
 
         except Exception as e:
             logger.error(f"Fallo definitivo en proxy para {self.original_path}", exc_info=True)
@@ -113,6 +136,7 @@ class ProxyManager(QtCore.QObject):
         self.pool = QtCore.QThreadPool()
         self.pool.setMaxThreadCount(1) 
         self._temp_vault = tempfile.TemporaryDirectory(prefix="HICutter_Proxies_")
+        self.is_cancelled = False
         
         self._total_files = 0
         self._completed_files = 0
@@ -121,7 +145,13 @@ class ProxyManager(QtCore.QObject):
         self._workers_finished = 0
         self.start_time = 0.0
 
+    def cancel(self):
+        '''Metodo publico para cancelar el proceso'''
+        self.is_cancelled = True
+        self.pool.clear() # Borra todos los "Workers" que esten en cola
+
     def process_directory(self, input_dir: str):
+        self.is_cancelled = True # Reiniciamos banderin por si cancelaron y luego empiezan un nuevo lote
         valid_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.cr2'}
         heavy_exts = {'.tif', '.tiff', '.cr2'} 
         
@@ -149,7 +179,7 @@ class ProxyManager(QtCore.QObject):
             ext = os.path.splitext(file_path)[1].lower()
             if ext in heavy_exts:
                 self._workers_dispatched += 1
-                worker = ProxyWorker(file_path, self._temp_vault.name, i)
+                worker = ProxyWorker(file_path, self._temp_vault.name, i, lambda: self.is_cancelled)
                 worker.signals.finished.connect(self._on_worker_finished)
                 worker.signals.error.connect(self._on_worker_error)
                 self.pool.start(worker)
