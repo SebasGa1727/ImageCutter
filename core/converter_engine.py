@@ -30,7 +30,7 @@ class ProxyWorker(QtCore.QRunnable):
     @QtCore.pyqtSlot()
     def run(self):
         #Verificamos si el proceso ha sido cancelado o no
-        if self.check_cancel:
+        if self.check_cancel():
             return
 
         try:
@@ -49,20 +49,20 @@ class ProxyWorker(QtCore.QRunnable):
                 for attempt in range(max_retries):
                     try:
                         # verificacion de cancelacion por si tardo o volvio a verificar una segunda ocacion
-                        if self.check_cancel:
+                        if self.check_cancel():
                             return
-                        
+
                         with rawpy.imread(self.original_path) as raw:
                             # Configuración de Revelado de Grado Profesional
                             rgb = raw.postprocess(
                                 use_camera_wb=True,                                 # Respeta el balance de blancos de la cámara
                                 no_auto_bright=True,                                # APAGA el auto-brillo (Evita que el papel se queme o se lave)
-                                exp_shift=7.0,                                      # "Perilla" para subir la luz de forma limpia 
-                                noise_thr=450.0,                                    # Destructor de "confeti"- Valores altos (ej. 500) eliminan el confeti de colores sin borrar las letras.
+                                exp_shift=5.0,                                      # "Perilla" para subir la luz de forma limpia 
+                                noise_thr=300.0,                                    # Destructor de "confeti"- Valores altos (ej. 500) eliminan el confeti de colores sin borrar las letras.
                                 highlight_mode=rawpy.HighlightMode.Blend,           # Mezcla canales para recuperar texto en zonas brillantes
                                 output_color=rawpy.ColorSpace.sRGB,                 # Fuerza el estándar web/pantalla
                                 gamma=(2.222, 4.5),                                 # Aplica curva gamma humana natural
-                                demosaic_algorithm=rawpy.DemosaicAlgorithm.AAHD     # Elimina las "Escaleras" que se generan en las letras
+                                demosaic_algorithm=rawpy.DemosaicAlgorithm.AHD      # Elimina las "Escaleras" que se generan en las letras
                             ) 
                             pil_img = Image.fromarray(rgb)
                             
@@ -151,7 +151,7 @@ class ProxyManager(QtCore.QObject):
         self.pool.clear() # Borra todos los "Workers" que esten en cola
 
     def process_directory(self, input_dir: str):
-        self.is_cancelled = True # Reiniciamos banderin por si cancelaron y luego empiezan un nuevo lote
+        self.is_cancelled = False # Reiniciamos banderin por si cancelaron y luego empiezan un nuevo lote
         valid_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.cr2'}
         heavy_exts = {'.tif', '.tiff', '.cr2'} 
         
@@ -191,7 +191,7 @@ class ProxyManager(QtCore.QObject):
             self.finished.emit(self._final_list)
             return
         
-        self.progress.emit(0, self._workers_dispatched, "Analizando bóveda de proxies...")
+        self.progress.emit(0, self._workers_dispatched, "Analizando imagenes...")
 
     def _on_worker_finished(self, index: int, proxy_path: str):
         self._final_list[index] = proxy_path
@@ -211,13 +211,13 @@ class ProxyManager(QtCore.QObject):
         else:
             eta_str = f"{int(eta_seconds)}s"
         
-        msg = f"Generando proxy {self._workers_finished}/{self._workers_dispatched}: {os.path.basename(proxy_path)}\n\nTiempo estimado restante: {eta_str}"
+        msg = f"Convirtiendo imagen: {self._workers_finished}/{self._workers_dispatched}\n\nTiempo estimado restante: {eta_str}\n\n{os.path.basename(proxy_path)}"
         self.progress.emit(self._workers_finished, self._workers_dispatched, msg)
         
         self._check_if_done()
 
     def _on_worker_error(self, index: int, orig_path: str, error_msg: str):
-        logger.warning(f"Omitiendo proxy para {orig_path} debido a un error: {error_msg}")
+        logger.warning(f"Omitiendo imagen para {orig_path} debido a un error: {error_msg}")
         self._final_list[index] = "" 
         self._workers_finished += 1
         self._completed_files += 1

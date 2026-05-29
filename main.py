@@ -9,7 +9,7 @@ from PyQt6.QtCore import QThreadPool, QRunnable, pyqtSignal, QObject
 from core.batch_engine import BatchManager, BatchWorker, PreloadWorker
 from core.processor import process_perspective_crop, rotate_image
 from core.output_pdf_fmt import export_to_pdf
-from core.proxy_engine import ProxyManager
+from core.converter_engine import ProxyManager
 from image_canvas import ImageCanvas
 from ui.views.landing_view import LandingView
 from utils.logger import setup_logger
@@ -180,6 +180,7 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.is_batch_mode = False
 		logger.info("El usuario canceló la generación de proxies.")
 
+	# Metodos para cargar la imagen y flujo de trabajo
 	def load_image(self, path: str | None = None) -> None:
 		# Si se proporciona `path`, úsalo; si no, abrir dialogo de archivo
 		if path is None:
@@ -235,6 +236,7 @@ class MainWindow(QtWidgets.QMainWindow):
 		except Exception:
 			logger.warning("LA funcionalidad de 'Shortcuts' no fue activada/desactivada correctamente", exc_info=True)
 
+	# Metodos para trabajo asincrono del modo lote
 	def _start_batch_workflow(self):
 		from ui.views.batch_setup_dialog import BatchSetupDialog
 		dialog = BatchSetupDialog(self)
@@ -323,11 +325,14 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.current_image_path = path
 		nombre_archivo = os.path.basename(path)
 		
-		# Calculamos el progreso basado en los archivos ya procesados en lugar del índice
-		procesados_actuales = len(self.batch_manager.success_list) + len(self.batch_manager.error_list) + 1
-		progreso = f"{procesados_actuales}/{len(self.batch_manager.image_files)}"
+		# Calculamos el progreso basado en el archivo actual de la lista que esta trabajando
+		try:
+			indice = self.batch_manager.image_files.index(path)
+			progress = f"{indice + 1}/{len(self.batch_manager.image_files)}"
+		except ValueError:
+			progress = f"?/{len(self.batch_manager.image_files)}"
 		
-		self.canvas.set_hud_info(nombre_archivo, progreso)
+		self.canvas.set_hud_info(nombre_archivo, progress)
 		self.canvas.load_image(cv_image=img, pre_scaled_qimage=scaled_qimg)
 		self.stack.setCurrentIndex(1)
 
@@ -571,6 +576,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
 		self.cpu_pool.start(pdf_worker)
 	
+	# Metodos para la creacion del PDF
 	def _on_pdf_success(self, final_path: str):
 		if hasattr(self, 'pdf_wait_dialog') and self.pdf_wait_dialog:
 			self.pdf_wait_dialog.close()
