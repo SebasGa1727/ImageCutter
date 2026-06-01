@@ -12,7 +12,7 @@ class SettingsDialog(QtWidgets.QDialog):
         super().__init__(parent)
         
         self.setWindowTitle("Configuracion de exportacion")
-        self.setMinimumSize(550, 350)
+        self.setMinimumSize(550, 400)
 
         #Obligamos al usuario a cerrar esta ventana antes de continuar usando la APP
         self.setModal(True)
@@ -24,12 +24,19 @@ class SettingsDialog(QtWidgets.QDialog):
         '''Construimos la interfas basada en pestañas'''
         main_layout = QtWidgets.QVBoxLayout(self)
 
+        style_sheet ="""
+            QDialog { background-color: #121212;}
+            QWidget { font-family: "Lato"; color: #E0E0E0; /* Color de texto base para todo */}
+        """
+
+        self.setStyleSheet(style_sheet)
+
         #Creamos el contenedor de pestañas
         self.tabs = QtWidgets.QTabWidget()
         main_layout.addWidget(self.tabs)
 
         #Creamos cada pestaña por separado
-        self.tabs.addTab(self._create_paths_tab(), "Carpeta guardado")
+        self.tabs.addTab(self._create_paths_tab(), "Carpeta salida")
         self.tabs.addTab(self._create_image_tab(), "Formato Imagen")
         self.tabs.addTab(self._create_th_tab(), "Formato TH")
         self.tabs.addTab(self._create_pdf_tab(), "PDF")
@@ -56,7 +63,7 @@ class SettingsDialog(QtWidgets.QDialog):
     
     def _create_paths_tab(self) -> QtWidgets.QWidget:
         #Creamos el metodo de construccion de pestañas y su contenido de cada una
-        '''Creamos el formulario para la ruta de guardado'''
+        '''Creamos el formulario para la ruta de salida'''
         tab = QtWidgets.QWidget()
         layout = QtWidgets.QFormLayout(tab)
 
@@ -99,14 +106,14 @@ class SettingsDialog(QtWidgets.QDialog):
             return
 
     def _create_image_tab(self) -> QtWidgets.QWidget:
-        '''Crearemos el formularo para RD'''
+        '''Crearemos el formularo para imagen'''
         tab = QtWidgets.QWidget()
         #Definiremos que sea un QFormLayout para que funga como tipo formulario
         layout = QtWidgets.QFormLayout(tab)
 
         #Crearemos el tipo de entrada que permitira cada seccion
         self.image_format = QtWidgets.QComboBox() #<- Le estamos diciendo que tendra una lista desplegable
-        self.image_format.addItems(["jpg", "png", "tif"])
+        self.image_format.addItems(["JPG", "JPEG", "PNG"])
 
         self.image_quality = QtWidgets.QSpinBox() #<- Le indicamos que acepte valores numericos
         self.image_quality.setRange(1, 100)
@@ -116,14 +123,13 @@ class SettingsDialog(QtWidgets.QDialog):
 
         self.image_long_edge = QtWidgets.QSpinBox()
         self.image_long_edge.setRange(500, 10000)
-        self.image_long_edge.setSuffix(" px") #<- Le agregamos un sufijo, que no afecta la matematica
 
         self.image_folder = QtWidgets.QLineEdit() #<- Le indicamos que acepte texto plano
 
         layout.addRow("Formato de imagen:", self.image_format) #<- Le indicamos el texto y el tipo de valor que recibira
         layout.addRow("Calidad de la imagen (%):", self.image_quality)
         layout.addRow("DPI:", self.image_dpi)
-        layout.addRow("Lado largo:", self.image_long_edge)
+        layout.addRow("Lado largo (px):", self.image_long_edge)
         layout.addRow("Nombre carpeta:", self.image_folder)
 
         return tab
@@ -132,17 +138,13 @@ class SettingsDialog(QtWidgets.QDialog):
         """Crea el formulario para TH"""
         tab = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(tab)
-        
-        self.create_th = QtWidgets.QCheckBox("Crear thumbnail (TH)")
-        layout.addWidget(self.create_th)
 
         info_label = QtWidgets.QLabel(
-            "<i>Nota:<br> Esta opción afecta únicamente al procesamiento de imagen INDIVIDUAL<br>"
-            "En el procesamiento por lotes, podrás elegir tu miniatura al finalizar.</i>"
+            "<i>Modifica los valores de exportacion para el Thumbnail (TH).<br>"
+            "Estos valores afectan al procesamiento por lotes y al procesamiento de imagen individual.</i>"
         )
         info_label.setWordWrap(True)
-        info_label.setStyleSheet("color: #888888; font-size: 12px; margin-left: 20px; margin-bottom: 10px;")
-        layout.addWidget(info_label)
+        info_label.setStyleSheet("color: #888888; font-size: 14px; margin-left: 20px; margin-bottom: 10px;")
 
         form_container = QtWidgets.QWidget()
         form_layout = QtWidgets.QFormLayout(form_container)
@@ -162,10 +164,11 @@ class SettingsDialog(QtWidgets.QDialog):
         self.th_short_edge.setSuffix(" px")
 
         form_layout.addRow("Formato de imagen:", self.th_format)
-        form_layout.addRow("Calidad JPG (%):", self.th_quality)
+        form_layout.addRow("Calidad (%):", self.th_quality)
         form_layout.addRow("DPI:", self.th_dpi)
         form_layout.addRow("Longitud lado corto:", self.th_short_edge)
-        
+
+        layout.addWidget(info_label)        
         layout.addWidget(form_container)
         layout.addStretch()
 
@@ -219,7 +222,7 @@ class SettingsDialog(QtWidgets.QDialog):
             "<i>(Se recomienda mantener desactivado para usuarios estándar)</i>"
         )
         info_label.setWordWrap(True) # Permite que el texto baje a la siguiente línea
-        info_label.setStyleSheet("color: #D6D989; margin-top: 15px;") # Color gris para que no sea agresivo
+        info_label.setStyleSheet("color: #D6D989; margin-top: 15px;") 
         
         layout.addWidget(info_label)
         layout.addStretch()
@@ -241,8 +244,6 @@ class SettingsDialog(QtWidgets.QDialog):
             self.image_folder.setText(config_manager.get("export_image", "output_dir"))
 
             # Pestaña TH
-            is_create_th_checked = bool(config_manager.get("export_th", "enabled") or False)
-            self.create_th.setChecked(is_create_th_checked)
             self.th_format.setCurrentText(config_manager.get("export_th", "format") or "jpg")
             self.th_quality.setValue(int(config_manager.get("export_th", "quality") or 60))
             self.th_dpi.setValue(int(config_manager.get("export_th", "dpi") or 72))
@@ -279,15 +280,14 @@ class SettingsDialog(QtWidgets.QDialog):
             config_manager.set("export_image", "format", self.image_format.currentText())
             config_manager.set("export_image", "quality", self.image_quality.value())
             config_manager.set("export_image", "dpi", self.image_dpi.value())
-            config_manager.set("export_image", "long_edge", self.image_long_edge.value())
+            config_manager.set("export_image", "longest_edge", self.image_long_edge.value())
             config_manager.set("export_image", "output_dir", self.image_folder.text().strip())
 
             # Guardado TH
-            config_manager.set("export_th", "enabled", self.create_th.isChecked())
             config_manager.set("export_th", "format", self.th_format.currentText())
             config_manager.set("export_th", "quality", self.th_quality.value())
             config_manager.set("export_th", "dpi", self.th_dpi.value())
-            config_manager.set("export_th", "short_edge", self.th_short_edge.value())
+            config_manager.set("export_th", "shortest_edge", self.th_short_edge.value())
 
             # Guardado PDF e IA
             config_manager.set("export_pdf", "enabled", self.pdf_enable_check.isChecked())
