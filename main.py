@@ -485,9 +485,7 @@ class MainWindow(QtWidgets.QMainWindow):
 			QtWidgets.QMessageBox.warning(self, "Error", "No se pudo exportar la imagen recortada (revise logs)")
 		
 		try:
-			export_th_is_enabled = config_manager.get("export_th", "enabled")
-			if export_th_is_enabled:
-				export_th(warped, base_name, parent_folder_name)
+			export_th(warped, base_name, parent_folder_name)
 				
 		except Exception:
 			logger.error("Error al Exportar formato TH", exc_info=True)
