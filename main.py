@@ -63,6 +63,9 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.proxy_manager.progress.connect(self._on_proxy_progress)
 		self.proxy_manager.finished.connect(self._on_proxy_finished)
 		self.proxy_manager.error.connect(self._on_proxy_error)
+		self.proxy_manager.system_alert.connect(self._show_os_notification)
+		self.proxy_manager.process_resume.connect(self._quit_os_notification)
+		self._out_of_ram_warning = None
 		self.proxy_wait_dialog = None
 
 		#Procesamiento por lote implementado desde Batch_engine
@@ -179,6 +182,37 @@ class MainWindow(QtWidgets.QMainWindow):
 			self.proxy_wait_dialog = None
 		self.is_batch_mode = False
 		logger.info("El usuario canceló la generación de proxies.")
+
+	def _show_os_notification(self, msg: str) -> None:
+		'''Metodo para enviar notificacion de sistema al usuario por falta de RAM'''
+		# Seguro anti SPAM
+		if getattr(self, "_is_showing_alert", False):
+			return
+		
+		self._is_showing_alert = True
+
+		QtWidgets.QApplication.alert(self)
+
+		if QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
+			tray_icon = QtWidgets.QSystemTrayIcon(self.windowIcon(), self)
+			tray_icon.show()
+			tray_icon.showMessage("HICutter - Atención Requerida", msg, QtWidgets.QSystemTrayIcon.MessageIcon.Warning, 10000) # 10 segundos
+
+		self._out_of_ram_warning = QtWidgets.QProgressDialog(msg, None, 0, 0, self)
+		self._out_of_ram_warning.setWindowTitle("⚠️ PROCESO PAUSADO ⚠️")
+		self._out_of_ram_warning.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+		self._out_of_ram_warning.setCancelButton(None)
+		current_flags = self._out_of_ram_warning.windowFlags()
+		self._out_of_ram_warning.setWindowFlags(current_flags & ~QtCore.Qt.WindowType.WindowCloseButtonHint)
+		self._out_of_ram_warning.show()
+
+	def _quit_os_notification(self, state: bool) -> None:
+		'''Metodo para eliminar la notificacion del usuario por falta de ram'''
+		if getattr(self, "_out_of_ram_warning", None)is not None and state:
+			self._out_of_ram_warning.hide()
+			self._out_of_ram_warning.deleteLater()
+			self._out_of_ram_warning = None
+			self._is_showing_alert = False
 
 	# Metodos para cargar la imagen y flujo de trabajo
 	def load_image(self, path: str | None = None) -> None:
@@ -299,7 +333,7 @@ class MainWindow(QtWidgets.QMainWindow):
 			
 			if msg_box.clickedButton() == btn_abortar:
 				self.cancel_operation(prompt_user=False)
-			else:
+			if msg_box.clickedButton() == btn_continuar:
 				# Si decide continuar, forzamos lectura de la siguiente para brincarnos la corrupta
 				self._load_next_batch_image(force_sync=True)
 			return

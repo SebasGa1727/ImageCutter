@@ -2,6 +2,9 @@ import os
 import gc
 import cv2
 import time
+import multiprocessing
+import psutil
+import math
 try:
     import rawpy
     RAWPY_AVAILABLE = True
@@ -14,9 +17,67 @@ from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+def calculate_optimal_threads(ram_per_worker_mb: int = 350) -> int:
+    """Calcula cuántos hilos podemos usar de forma segura basándose en 
+    la Memoria RAM libre en este milisegundo y los núcleos físicos del CPU."""
+    # Obtenermos la cantidad de nucleos fisicos
+    total_cores = multiprocessing.cpu_count()
+
+    # Obtenemos la ram disponible en MB 
+    available_ram_mb = psutil.virtual_memory().available / (1024 * 1024)
+
+    # Dejamos 1 GB disponible para windos y la UI
+    safe_ram_mb = available_ram_mb - 1024
+    
+    if safe_ram_mb <= 0: # <- Si solo queda 1 GB de ram
+        return 1 # <- Retornamos un worker unicamente (la ram esta saturada)
+    
+    # Calculamos cuantas fotos teoricas caben en la ram disponible
+    max_threads_by_ram =int(math.floor(safe_ram_mb / ram_per_worker_mb))
+
+    # Obtenemos el numero minimo viable, ya sea que lo limite la ram o los nucleos
+    optimal_threads = min(total_cores, max_threads_by_ram)
+
+    # Dejamos libre 1 procesador si es que ya tenemos mas de 4 nucleos asignados (con 4 va super bien la conversion)
+    if optimal_threads > 4:
+        optimal_threads -= 1
+
+    return max(1, optimal_threads)
+
+def wait_for_resources(check_cancel_func, process_resume, alert_func, safe_margin_mb: int = 500, timeout_secs: int =120) -> None:
+    """Pausa el hilo actual si la RAM de la PC cae por debajo del margen seguro, actua como un semáforo dinámico"""
+    waited_time = 0
+    alert_triggered = False
+
+    while True:
+        if check_cancel_func():
+            return False
+
+        # Condicion ideal - la memoria ram es suficiente para procesar y convertir datos
+        available_mb = psutil.virtual_memory().available / (1024 * 1024)
+        if available_mb > safe_margin_mb:
+            if alert_triggered:
+                process_resume(True)
+                logger.info("Recursos liberados. Reanuando proceso.")
+            return True
+        
+        if waited_time >= timeout_secs and not alert_triggered:
+            error_msg = "MEMORIA RAM SATURADA.\nCIERRE OTRAS APLICACIONES PARA LIBERAR RECURSOS Y REANUDAR EL PROCESO."
+            logger.warning(error_msg)
+            alert_func(error_msg)
+            alert_triggered = True
+        
+        # Si la RAM es crítica, el hilo se duerme 1 segundo.
+        time.sleep(1.0)
+
+        if not alert_triggered:
+            waited_time += 1
+
 class ProxyWorkerSignals(QtCore.QObject):
     finished = QtCore.pyqtSignal(int, str)
     error = QtCore.pyqtSignal(int, str, str)
+    resource_warning = QtCore.pyqtSignal(str)
+    process_resume = QtCore.pyqtSignal(bool)
 
 class ProxyWorker(QtCore.QRunnable):
     def __init__(self, original_path: str, temp_dir: str, index: int, check_cancel_func):
@@ -40,10 +101,15 @@ class ProxyWorker(QtCore.QRunnable):
             
             proxy_path = os.path.join(self.temp_dir, f"{name_no_ext}.jpg")
 
-            # PROCESO CR2   
+            # PROCESO CR2 inspirado de xnconvert
             if ext == '.cr2':
                 if not RAWPY_AVAILABLE:
                     raise ImportError("Librería rawpy no instalada.")
+                
+                alert_callback = lambda msg: self.signals.resource_warning.emit(msg)
+                process_resume = lambda state: self.signals.process_resume.emit(state)
+                if not wait_for_resources(self.check_cancel, alert_callback, process_resume, safe_margin_mb=500, timeout_secs=120): #<- Filtro de seguridad para calcular los recursos disponibles al moemnto
+                    return
                 
                 max_retries = 3
                 for attempt in range(max_retries):
@@ -53,21 +119,18 @@ class ProxyWorker(QtCore.QRunnable):
                             return
 
                         with rawpy.imread(self.original_path) as raw:
-                            # Configuración de Revelado de Grado Profesional
+                            # Configuración de Revelado 
                             rgb = raw.postprocess(
                                 use_camera_wb=True,                                 # Respeta el balance de blancos de la cámara
+                                half_size=False,                                    # Mantiene la resolusion completa
                                 no_auto_bright=True,                                # APAGA el auto-brillo (Evita que el papel se queme o se lave)
-                                exp_shift=5.0,                                      # "Perilla" para subir la luz de forma limpia 
-                                noise_thr=300.0,                                    # Destructor de "confeti"- Valores altos (ej. 500) eliminan el confeti de colores sin borrar las letras.
-                                highlight_mode=rawpy.HighlightMode.Blend,           # Mezcla canales para recuperar texto en zonas brillantes
-                                output_color=rawpy.ColorSpace.sRGB,                 # Fuerza el estándar web/pantalla
-                                gamma=(2.222, 4.5),                                 # Aplica curva gamma humana natural
-                                demosaic_algorithm=rawpy.DemosaicAlgorithm.AHD      # Elimina las "Escaleras" que se generan en las letras
+                                demosaic_algorithm=rawpy.DemosaicAlgorithm.LINEAR,  # Elimina las "Escaleras" que se generan en las letras sin saturar la ram
+                                output_color=rawpy.ColorSpace.sRGB                  # Espacio de color estandar
                             ) 
                             pil_img = Image.fromarray(rgb)
                             
-                            # Calidad 90% 
-                            pil_img.save(proxy_path, 'JPEG', quality=90)
+                            # Maxima calidad posible para evitar perdidas
+                            pil_img.save(proxy_path, 'JPEG', quality=100, subsampling=0)
                             
                             del pil_img
                             del rgb
@@ -76,12 +139,12 @@ class ProxyWorker(QtCore.QRunnable):
                     
                     except Exception as e:
                         if attempt < max_retries - 1:
-                            logger.warning(f"Bloqueo I/O en {base_name}. Reintentando en 0.5s...")
+                            logger.warning(f"Reintentando {base_name}...")
                             time.sleep(0.5)
                         else:
                             raise e
 
-            # PROCESO TIFF (Calidad Premium 100% Resolución)
+            # PROCESO TIFF (Calidad Premium 100% Resolución) solucion estilo XnConvert
             elif ext in ['.tif', '.tiff']:
                 max_retries = 3
                 for attempt in range(max_retries):
@@ -90,31 +153,26 @@ class ProxyWorker(QtCore.QRunnable):
                         if self.check_cancel():
                             return
                         
+                        alert_callback = lambda msg: self.signals.resource_warning.emit(msg)
+                        process_resume = lambda state: self.signals.process_resume.emit(state)
+                        if not wait_for_resources(self.check_cancel, alert_callback, process_resume, safe_margin_mb=500, timeout_secs=120): #<- Filtro de seguridad para calcular los recursos disponibles al moemnto
+                            return
+                        
                         img = cv2.imread(self.original_path)
-                        if img is None:
-                            raise ValueError("OpenCV devolvió una matriz nula al leer el TIFF")
+                        if img is None: 
+                            raise ValueError("Matriz tiff nula o archivo corrupto")
                         
-                        if img.ndim == 3 and img.shape[2] == 3:
-                            rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                        elif img.ndim == 4:
-                            rgb_img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
-                        else:
-                            rgb_img = img
+                        success = cv2.imwrite(proxy_path, img, [int(cv2.IMWRITE_JPEG_QUALITY), 100])
+                        if not success:
+                            raise IOError("Error de I/O al escribir JPG")
                         
-                        pil_img = Image.fromarray(rgb_img)
-                        
-                        # Guardamos calidad al 95%
-                        pil_img.save(proxy_path, 'JPEG', quality=90)
-                        
-                        del pil_img
-                        del rgb_img
                         del img
                         gc.collect()
                         break
                     
                     except Exception as e:
                         if attempt < max_retries - 1:
-                            logger.warning(f"Bloqueo I/O en {base_name}. Reintentando en 0.5s...")
+                            logger.warning(f"Reintentando {base_name}...")
                             time.sleep(0.5)
                         else:
                             raise e
@@ -129,12 +187,15 @@ class ProxyWorker(QtCore.QRunnable):
 class ProxyManager(QtCore.QObject):
     progress = QtCore.pyqtSignal(int, int, str) 
     finished = QtCore.pyqtSignal(list)          
-    error = QtCore.pyqtSignal(str)              
+    error = QtCore.pyqtSignal(str)
+    system_alert = QtCore.pyqtSignal(str)
+    process_resume = QtCore.pyqtSignal(bool)
     
     def __init__(self):
         super().__init__()
         self.pool = QtCore.QThreadPool()
-        self.pool.setMaxThreadCount(1) 
+        self.pool.setMaxThreadCount(1)
+
         self._temp_vault = tempfile.TemporaryDirectory(prefix="HICutter_Proxies_")
         self.is_cancelled = False
         
@@ -152,6 +213,11 @@ class ProxyManager(QtCore.QObject):
 
     def process_directory(self, input_dir: str):
         self.is_cancelled = False # Reiniciamos banderin por si cancelaron y luego empiezan un nuevo lote
+
+        safe_threads = calculate_optimal_threads(ram_per_worker_mb=350)
+        self.pool.setMaxThreadCount(safe_threads)
+        logger.info(f"Nucleos asignados al convertidor: {safe_threads}")
+
         valid_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.cr2'}
         heavy_exts = {'.tif', '.tiff', '.cr2'} 
         
@@ -182,6 +248,8 @@ class ProxyManager(QtCore.QObject):
                 worker = ProxyWorker(file_path, self._temp_vault.name, i, lambda: self.is_cancelled)
                 worker.signals.finished.connect(self._on_worker_finished)
                 worker.signals.error.connect(self._on_worker_error)
+                worker.signals.resource_warning.connect(self._show_os_notification)
+                worker.signals.process_resume.connect(self._quit_os_notification)
                 self.pool.start(worker)
             else:
                 self._final_list[i] = file_path
@@ -229,3 +297,12 @@ class ProxyManager(QtCore.QObject):
         if self._completed_files == self._total_files:
             clean_list = [p for p in self._final_list if p != ""]
             self.finished.emit(clean_list)
+
+    def _show_os_notification(self, msg: str):
+        '''Le mandamos aviso a main de la saturacion en la memoria'''
+        self.progress.emit(self._workers_finished, self._workers_dispatched, f"\t⚠️ PROCESO PAUSADO ⚠️\n\n{msg}")
+        self.system_alert.emit(msg)
+
+    def _quit_os_notification(self, state: bool):
+        '''Mandamos notificacion de que el proceso ha sido restaurado'''
+        self.process_resume.emit(state)
