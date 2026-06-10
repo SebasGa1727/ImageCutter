@@ -20,7 +20,6 @@ class UserConfigManager:
             "output_dir": "Recortadas"
         },
         "export_th":{
-            "enabled": False,
             "format": "jpg",
             "quality": 60,
             "dpi": 72,
@@ -32,7 +31,7 @@ class UserConfigManager:
             "quality": 75
         },
         "ai_export":{
-            "yolo_Enabled": False
+            "yolo_enabled": False
         },
         "paths":{
             "use_preset_dir": False,

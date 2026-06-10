@@ -1,4 +1,4 @@
-"""Processing helpers for HICutter.
+"""Processing helpers for ImageCutter.
 
 This module contains the image processing logic separated from the UI.
 """

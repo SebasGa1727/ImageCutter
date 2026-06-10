@@ -62,7 +62,7 @@ def export_image(cv_image: np.ndarray, base_filename: str, parent_folder_name: s
         sub_folder = config_manager.get("export_image", "output_dir")
 
         if not base_dir:
-            base_dir = os.path.join(os.path.expanduser("~"), "Documents", "HICutter_Exports")
+            base_dir = os.path.join(os.path.expanduser("~"), "Documents", "ImageCutter_Exports")
         
         #insertamos el nombre de la carpeta de donde se extrajeron las imagenes
         if parent_folder_name:
@@ -115,7 +115,7 @@ def export_th(cv_image: np.ndarray, base_filename: str, parent_folder_name: str 
         base_dir = config_manager.get("paths", "last_dir")
 
         if not base_dir:
-            base_dir = os.path.join(os.path.expanduser("~"), "Documents", "HICutter_Exports")
+            base_dir = os.path.join(os.path.expanduser("~"), "Documents", "ImageCutter_Exports")
         
         #insertamos el nombre de la carpeta de donde se extrajeron las imagenes
         if parent_folder_name:

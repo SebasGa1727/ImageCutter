@@ -9,7 +9,7 @@ from PyQt6.QtCore import QThreadPool, QRunnable, pyqtSignal, QObject
 from core.batch_engine import BatchManager, BatchWorker, PreloadWorker
 from core.processor import process_perspective_crop, rotate_image
 from core.output_pdf_fmt import export_to_pdf
-from core.proxy_engine import ProxyManager
+from core.converter_engine import ProxyManager
 from image_canvas import ImageCanvas
 from ui.views.landing_view import LandingView
 from utils.logger import setup_logger
@@ -45,7 +45,7 @@ class PDFWorker(QRunnable):
 class MainWindow(QtWidgets.QMainWindow):
 	def __init__(self) -> None:
 		super().__init__()
-		self.setWindowTitle('HICutter - Historical Image Cutter by SGV.dev')
+		self.setWindowTitle('ImageCutter - by SGV.dev')
 
 		# Stacked widget: 0 = LandingView, 1 = ImageCanvas (editor), 2= BatchSummaryView
 		self.stack = QtWidgets.QStackedWidget()
@@ -63,6 +63,9 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.proxy_manager.progress.connect(self._on_proxy_progress)
 		self.proxy_manager.finished.connect(self._on_proxy_finished)
 		self.proxy_manager.error.connect(self._on_proxy_error)
+		self.proxy_manager.system_alert.connect(self._show_os_notification)
+		self.proxy_manager.process_resume.connect(self._quit_os_notification)
+		self._out_of_ram_warning = None
 		self.proxy_wait_dialog = None
 
 		#Procesamiento por lote implementado desde Batch_engine
@@ -143,7 +146,8 @@ class MainWindow(QtWidgets.QMainWindow):
 				self.proxy_wait_dialog.canceled.disconnect()
 			except Exception:
 				pass
-			self.proxy_wait_dialog.close()
+			self.proxy_wait_dialog.hide()
+			self.proxy_wait_dialog.deleteLater()
 			self.proxy_wait_dialog = None
 		
 		#Pasamos la lista limpia de puros jpg
@@ -162,18 +166,55 @@ class MainWindow(QtWidgets.QMainWindow):
 				self.proxy_wait_dialog.canceled.disconnect()
 			except Exception:
 				pass
-			self.proxy_wait_dialog.close()
+			self.proxy_wait_dialog.hide()
+			self.proxy_wait_dialog.deleteLater()
 			self.proxy_wait_dialog = None
 		QtWidgets.QMessageBox.critical(self, "Error de Carpeta", err_msg)	
 
 	def _cancel_proxies(self):
 		'''Proceso si el usuario cancela mientras se crea el proxy'''
+		self.proxy_manager.cancel()
+		self.cancel_operation(prompt_user=False)
+
 		if hasattr(self, 'proxy_wait_dialog') and self.proxy_wait_dialog:
-			self.proxy_wait_dialog.close()
+			self.proxy_wait_dialog.hide()
+			self.proxy_wait_dialog.deleteLater()
 			self.proxy_wait_dialog = None
 		self.is_batch_mode = False
 		logger.info("El usuario canceló la generación de proxies.")
 
+	def _show_os_notification(self, msg: str) -> None:
+		'''Metodo para enviar notificacion de sistema al usuario por falta de RAM'''
+		# Seguro anti SPAM
+		if getattr(self, "_is_showing_alert", False):
+			return
+		
+		self._is_showing_alert = True
+
+		QtWidgets.QApplication.alert(self)
+
+		if QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
+			tray_icon = QtWidgets.QSystemTrayIcon(self.windowIcon(), self)
+			tray_icon.show()
+			tray_icon.showMessage("ImageCutter - Atención Requerida", msg, QtWidgets.QSystemTrayIcon.MessageIcon.Warning, 10000) # 10 segundos
+
+		self._out_of_ram_warning = QtWidgets.QProgressDialog(msg, None, 0, 0, self)
+		self._out_of_ram_warning.setWindowTitle("⚠️ PROCESO PAUSADO ⚠️")
+		self._out_of_ram_warning.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+		self._out_of_ram_warning.setCancelButton(None)
+		current_flags = self._out_of_ram_warning.windowFlags()
+		self._out_of_ram_warning.setWindowFlags(current_flags & ~QtCore.Qt.WindowType.WindowCloseButtonHint)
+		self._out_of_ram_warning.show()
+
+	def _quit_os_notification(self, state: bool) -> None:
+		'''Metodo para eliminar la notificacion del usuario por falta de ram'''
+		if getattr(self, "_out_of_ram_warning", None)is not None and state:
+			self._out_of_ram_warning.hide()
+			self._out_of_ram_warning.deleteLater()
+			self._out_of_ram_warning = None
+			self._is_showing_alert = False
+
+	# Metodos para cargar la imagen y flujo de trabajo
 	def load_image(self, path: str | None = None) -> None:
 		# Si se proporciona `path`, úsalo; si no, abrir dialogo de archivo
 		if path is None:
@@ -229,6 +270,7 @@ class MainWindow(QtWidgets.QMainWindow):
 		except Exception:
 			logger.warning("LA funcionalidad de 'Shortcuts' no fue activada/desactivada correctamente", exc_info=True)
 
+	# Metodos para trabajo asincrono del modo lote
 	def _start_batch_workflow(self):
 		from ui.views.batch_setup_dialog import BatchSetupDialog
 		dialog = BatchSetupDialog(self)
@@ -238,7 +280,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
 			# Lanzamos el Diálogo nativo de carga. (Luego lo cambiaremos por la UI bonita)
 			self.proxy_wait_dialog = QtWidgets.QProgressDialog("Analizando bóveda de archivos...", "Cancelar", 0, 100, self)
-			self.proxy_wait_dialog.setWindowTitle("Configurando entorno seguro")
+			self.proxy_wait_dialog.setWindowTitle("Convirtiendo imagenes a JPG")
 			self.proxy_wait_dialog.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
 			self.proxy_wait_dialog.setAutoClose(False)
 			self.proxy_wait_dialog.setAutoReset(False)
@@ -291,7 +333,7 @@ class MainWindow(QtWidgets.QMainWindow):
 			
 			if msg_box.clickedButton() == btn_abortar:
 				self.cancel_operation(prompt_user=False)
-			else:
+			if msg_box.clickedButton() == btn_continuar:
 				# Si decide continuar, forzamos lectura de la siguiente para brincarnos la corrupta
 				self._load_next_batch_image(force_sync=True)
 			return
@@ -317,11 +359,14 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.current_image_path = path
 		nombre_archivo = os.path.basename(path)
 		
-		# Calculamos el progreso basado en los archivos ya procesados en lugar del índice
-		procesados_actuales = len(self.batch_manager.success_list) + len(self.batch_manager.error_list) + 1
-		progreso = f"{procesados_actuales}/{len(self.batch_manager.image_files)}"
+		# Calculamos el progreso basado en el archivo actual de la lista que esta trabajando
+		try:
+			indice = self.batch_manager.image_files.index(path)
+			progress = f"{indice + 1}/{len(self.batch_manager.image_files)}"
+		except ValueError:
+			progress = f"?/{len(self.batch_manager.image_files)}"
 		
-		self.canvas.set_hud_info(nombre_archivo, progreso)
+		self.canvas.set_hud_info(nombre_archivo, progress)
 		self.canvas.load_image(cv_image=img, pre_scaled_qimage=scaled_qimg)
 		self.stack.setCurrentIndex(1)
 
@@ -474,9 +519,7 @@ class MainWindow(QtWidgets.QMainWindow):
 			QtWidgets.QMessageBox.warning(self, "Error", "No se pudo exportar la imagen recortada (revise logs)")
 		
 		try:
-			export_th_is_enabled = config_manager.get("export_th", "enabled")
-			if export_th_is_enabled:
-				export_th(warped, base_name, parent_folder_name)
+			export_th(warped, base_name, parent_folder_name)
 				
 		except Exception:
 			logger.error("Error al Exportar formato TH", exc_info=True)
@@ -557,7 +600,7 @@ class MainWindow(QtWidgets.QMainWindow):
 		self.pdf_wait_dialog.show()
 		
 		# Determinamos el nombre de la carpeta final (El nombre de la carpeta de extraccion)
-		pdf_name = self.parent_folder_name if self.parent_folder_name else "PDF_exportado_por_HICutter"
+		pdf_name = self.parent_folder_name if self.parent_folder_name else "PDF_exportado_por_ImageCutter"
 
 		pdf_worker = PDFWorker(ordered_paths, pdf_name)
 		pdf_worker.signals.finished.connect(self._on_pdf_success) 
@@ -565,6 +608,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
 		self.cpu_pool.start(pdf_worker)
 	
+	# Metodos para la creacion del PDF
 	def _on_pdf_success(self, final_path: str):
 		if hasattr(self, 'pdf_wait_dialog') and self.pdf_wait_dialog:
 			self.pdf_wait_dialog.close()

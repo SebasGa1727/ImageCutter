@@ -34,7 +34,7 @@ def export_to_pdf(ordered_paths: list[str], output_filename: str) -> str:
         base_dir = config_manager.get("paths", "last_dir")
         
         if not base_dir:
-            base_dir = os.path.join(os.path.expanduser("~"), "Documents", "HICutter_Exports")
+            base_dir = os.path.join(os.path.expanduser("~"), "Documents", "ImageCutter_Exports")
 
         if output_filename:
             base_dir = os.path.join(base_dir, output_filename)

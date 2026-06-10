@@ -4,7 +4,7 @@ from logging.handlers import RotatingFileHandler
 
 def setup_logger(name: str) -> logging.Logger:
     """
-    Configura y devuelve una instancia de Logger estandarizada para HICutter.
+    Configura y devuelve una instancia de Logger estandarizada para ImageCutter.
     
     Se utiliza el patrón Singleton inherente del módulo logging de Python: 
     llamar a logging.getLogger(name) múltiples veces con el mismo nombre 
@@ -55,7 +55,7 @@ def setup_logger(name: str) -> logging.Logger:
     log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
     os.makedirs(log_dir, exist_ok=True)
     
-    log_file_path = os.path.join(log_dir, 'hicutter_app.log')
+    log_file_path = os.path.join(log_dir, 'ImageCutter_app.log')
     
     # maxBytes=5242880 (5 MB): Cuando el archivo alcance 5MB, se renombra a .log.1
     # backupCount=3: Mantiene un historial de los últimos 3 archivos (15MB en total máximo)

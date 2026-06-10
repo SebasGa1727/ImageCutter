@@ -286,7 +286,7 @@ if __name__ == "__main__":
     test_view.resize(1100, 750)
     test_view.showMaximized()
     
-    ruta_real_de_prueba = os.path.abspath("C:/Users/Sebastian/Documents/Sebastian Galicia/Proyects/HICutter/output/Recortadas/AHSEDENA_XI_112_Z_E0014_F001F.jpg") # <- Cambia esto por una foto ".jpg" real tuya
+    ruta_real_de_prueba = os.path.abspath("C:/Users/Sebastian/Documents/Sebastian Galicia/Proyects/ImageCutter/output/Recortadas/AHSEDENA_XI_112_Z_E0014_F001F.jpg") # <- Cambia esto por una foto ".jpg" real tuya
     
     datos_exito_falsos = [
         ruta_real_de_prueba,

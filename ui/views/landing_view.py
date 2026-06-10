@@ -9,13 +9,12 @@ from ui.views.settings_dialog import SettingsDialog
 logger = setup_logger(__name__)
 
 class LandingView(QtWidgets.QWidget):
-    """Vista de bienvenida reutilizable que emite señales de navegación.
-
-    - `requestLoadImage`: emitida cuando el usuario pulsa 'Cargar Imagen'
-    - `requestLoadBatch`: emitida cuando el usuario pulsa 'Cargar Lote'
-    """
+    """Vista de bienvenida reutilizable que emite señales de navegación"""
     requestLoadImage = QtCore.pyqtSignal()
     requestLoadBatch = QtCore.pyqtSignal()
+    #TODO requestFastConvert = QtCore.pyqtSignal()
+    #TODO requestPdfGenerator = QtCore.pyqtSignal() 
+
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
@@ -27,7 +26,7 @@ class LandingView(QtWidgets.QWidget):
         layout.setSpacing(12)
         layout.setContentsMargins(24, 24, 24, 24)
 
-        welcome = QtWidgets.QLabel('Bienvenido a <span style="color: #0c8ce9;">HICutter</span>')
+        welcome = QtWidgets.QLabel('Bienvenido a <span style="color: #0c8ce9;">ImageCutter</span>')
         welcome.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         welcome_font = welcome.font()
         welcome_font.setPointSize(27)
@@ -35,49 +34,73 @@ class LandingView(QtWidgets.QWidget):
         welcome.setFont(welcome_font)
         welcome.setStyleSheet('background-color: transparent')
 
-        label = QtWidgets.QLabel('Selecciona la opcion de carga para iniciar el procesamiento')
+        label = QtWidgets.QLabel('Selecciona la opcion que deseas ejecutar')
         label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         label_font = label.font()
         label_font.setPointSize(20)
         label_font.setBold(False)
         label.setFont(label_font)
-        label.setStyleSheet('background-color: transparent')
+        label.setStyleSheet('background-color: transparent; color: #CCCCCC')
 
-        btn_batch = QtWidgets.QPushButton('Cargar Lote')
-        btn_batch_font = btn_batch.font()
-        btn_batch_font.setPointSize(16)
-        btn_batch_font.setBold(False)
-        btn_batch.setFont(btn_batch_font)
-        btn_batch.setMinimumHeight(50)
-        btn_batch.setFixedWidth(300)
-        btn_batch.setStyleSheet('background-color: #1E1E1E; color: #ffffff; border: 3px solid #0c8ce9; border-radius: 6px; padding: 8px;')
+        #Confirguracion estetica de botones
+        btn_style = """
+            QPushButton {
+                background-color: transparent; 
+                color: #ffffff; 
+                border: 2px solid #0c8ce9; 
+                border-radius: 16px; 
+                padding: 16px;
+                font-size: 17px;
+            }
+            QPushButton:hover {
+                background-color: #0c8ce9;
+                font-size: 16px;
+                font-weight: bold;
+            }
+        """
+
+        btn_batch = QtWidgets.QPushButton('Procesamiento por Lote')
+        btn_batch.setStyleSheet(btn_style)
         btn_batch.clicked.connect(lambda: self.requestLoadBatch.emit())
 
-        btn_image = QtWidgets.QPushButton('Cargar Imagen')
-        btn_image_font = btn_image.font()
-        btn_image_font.setPointSize(16)
-        btn_image_font.setBold(False)
-        btn_image.setFont(btn_image_font)
-        btn_image.setMinimumHeight(50)
-        btn_image.setFixedWidth(300)
-        btn_image.setStyleSheet('background-color: #1E1E1E; color: #ffffff; border: 3px solid #0c8ce9; border-radius: 6px; padding: 8px;')
+        btn_image = QtWidgets.QPushButton('Cargar Imagen Individual')
+        btn_image.setStyleSheet(btn_style)
         btn_image.clicked.connect(lambda: self.requestLoadImage.emit())
 
+        # btn_convert = QtWidgets.QPushButton('Convertir Formato de Imagenes')
+        # btn_convert.setStyleSheet(btn_style)
+        # btn_convert.clicked.connect(lambda: self.requestFastConvert.emit())
+
+        # btn_pdf = QtWidgets.QPushButton('Herramientas de PDF')
+        # btn_pdf.setStyleSheet(btn_style)
+        # btn_pdf.clicked.connect(lambda: self.requestPdfGenerator.emit())
+
+        #Diseño de cuadricula para los botones principales
+        grid_layout = QtWidgets.QGridLayout()
+        grid_layout.setSpacing(20)
+
+        grid_layout.addWidget(btn_batch, 0, 0)
+        grid_layout.addWidget(btn_image, 0, 1)
+
+        grid_container = QtWidgets.QWidget()
+        grid_container.setLayout(grid_layout)
+        grid_container.setMinimumWidth(600)
+        grid_container.setMaximumWidth(700)
+
+        #Ensamblaje principal
         layout.addStretch(1)
         layout.addWidget(welcome)
-        layout.addSpacing(15)
+        layout.addSpacing(10)
         layout.addWidget(label)
-        layout.addSpacing(65)
-        layout.addWidget(btn_image, alignment=QtCore.Qt.AlignmentFlag.AlignHCenter)
-        layout.addWidget(btn_batch, alignment=QtCore.Qt.AlignmentFlag.AlignHCenter)
+        layout.addSpacing(40)
+        layout.addWidget(grid_container, alignment=QtCore.Qt.AlignmentFlag.AlignHCenter)
         layout.addStretch(1)
 
         #Agregamos el boton de configuracion de formato
         self.btn_settings = QtWidgets.QToolButton(self)
         self.btn_settings.setText("⚙️")
-        self.btn_settings.setToolTip("Configuracion de Exportacion y PDF")
-
-        #Diseño CSS
+        self.btn_settings.setToolTip("Configuracion de valores de exportacion")
+        #Diseño CSS de boton de configuracion
         self.btn_settings.setStyleSheet('''
             QToolButton {
                 background: transparent;
@@ -89,7 +112,6 @@ class LandingView(QtWidgets.QWidget):
                 border-radius: 6px;
             }
         ''')
-
         self.btn_settings.clicked.connect(self._open_settings)
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
