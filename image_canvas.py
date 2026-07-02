@@ -56,7 +56,7 @@ class ImageCanvas(QtWidgets.QWidget):
         self._mouse_wy: float = 0
         self.cross_len: int = 10
         self.cross_color = QtGui.QColor(12, 140, 233)
-        self.line_color = QtGui.QColor(0, 0, 0)
+        self.line_color = QtGui.QColor(12, 140, 233)
         self.cross_width: int = 3
         self.border_color = QtGui.QColor(190, 190, 190)
 
@@ -69,7 +69,7 @@ class ImageCanvas(QtWidgets.QWidget):
         self._magnifier = MagnifierTool(size=MAG_SIZE, zoom=MAG_ZOOM, border=MAG_BORDER, offset=MAG_OFFSET)
        
         # Modo sniper/precisión
-        SNIPER_SENSITIVITY = 0.07
+        SNIPER_SENSITIVITY = 0.06
         self._sniper = SniperModeManager(sensitivity=SNIPER_SENSITIVITY)
 
 

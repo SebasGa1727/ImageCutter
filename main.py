@@ -8,7 +8,7 @@ from PyQt6.QtCore import QThreadPool, QRunnable, pyqtSignal, QObject
 
 from core.batch_engine import BatchManager, BatchWorker, PreloadWorker
 from core.processor import process_perspective_crop, rotate_image
-from core.output_pdf_fmt import export_to_pdf
+from core.output_pdf_fmt import export_to_pdf, export_individual_pdfs
 from core.converter_engine import ProxyManager
 from image_canvas import ImageCanvas
 from ui.views.landing_view import LandingView
@@ -29,15 +29,21 @@ class PDFWorkerSignals(QObject):
 
 class PDFWorker(QRunnable):
 	'''Hilo de trabajo (Worker) para generar PDF en segundo plano'''
-	def __init__(self, ordered_paths: list[str], output_filename: str):
+	def __init__(self, ordered_paths: list[str], output_filename: str, individual_PDFs: bool):
 		super().__init__()
 		self.ordered_paths = ordered_paths
 		self.output_filename = output_filename
+		self.individual_PDFs = individual_PDFs
 		self.signals = PDFWorkerSignals()
 	
 	def run(self):
 		try:
-			final_path = export_to_pdf(self.ordered_paths, self.output_filename)
+			# El Hilo de fondo decide qué función matemática llamar
+			if self.individual_pdfs:
+				final_path = export_individual_pdfs(self.ordered_paths, self.output_filename)
+			else:
+				final_path = export_to_pdf(self.ordered_paths, self.output_filename)
+				
 			self.signals.finished.emit(final_path)
 		except Exception as e:
 			self.signals.error.emit(str(e))
@@ -111,6 +117,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
 		#Señales del batch summary view
 		self.summary_view.request_continue.connect(self._on_summary_continue)
+		self.summary_view.request_cancel.connect(self.cancel_operation)
 
 		# Conectar la señal de la LandingView para abrir imagen
 		try:
@@ -542,7 +549,7 @@ class MainWindow(QtWidgets.QMainWindow):
 				self,
 				"Confirmar cancelacion",
 				"¿Estas seguro de cancelar el proceso actual y regresar a la pagina de inicio?\n" \
-				"Nota: En procesamiento por lote, esta accion solo afecta a la imagen actual.\n" \
+				"Nota: En procesamiento por lote, esta accion solo afecta al estado actual.\n" \
 				"Las imagenes previas no se veran afectadas.",
 				QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No, 
 				QtWidgets.QMessageBox.StandardButton.No #<- Eleccion por defecto en caso de que se presione "enter"
@@ -570,7 +577,7 @@ class MainWindow(QtWidgets.QMainWindow):
 			logger.error("Error al critico al intentar cancelar la operacion", exc_info=True)
 			QtWidgets.QMessageBox.warning(self, "Error", "Error al limpiar la memoria, intente nuevamente")
 
-	def _on_summary_continue(self, with_th: bool, th_image_path: str) -> None:
+	def _on_summary_continue(self, with_th: bool, th_image_path: str, individual_PDFs: bool) -> None:
 		'''Recibe la señal del batchsummary cuando el usuario confirma el lote'''
 		#Recibimos la lista ordenada por la UI del usaurio
 		ordered_paths = []
@@ -593,8 +600,9 @@ class MainWindow(QtWidgets.QMainWindow):
 		logger.info("inicializando generacion de PDF")
 		
 		# Mostramos pantalla de carga
-		self.pdf_wait_dialog = QtWidgets.QProgressDialog("Ensamblando documento PDF, por favor espere...", None, 0, 0, self)
-		self.pdf_wait_dialog.setWindowTitle("Generando PDF")
+		dialog_Text = "Generando PDFs individuales, por favor espere..." if individual_PDFs else "Ensamblando documento PDF, por favor espere..."
+		self.pdf_wait_dialog = QtWidgets.QProgressDialog(dialog_Text, None, 0, 0, self)
+		self.pdf_wait_dialog.setWindowTitle("Procesando exportacion")
 		self.pdf_wait_dialog.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
 		self.pdf_wait_dialog.setCancelButton(None)
 		self.pdf_wait_dialog.show()
@@ -602,7 +610,7 @@ class MainWindow(QtWidgets.QMainWindow):
 		# Determinamos el nombre de la carpeta final (El nombre de la carpeta de extraccion)
 		pdf_name = self.parent_folder_name if self.parent_folder_name else "PDF_exportado_por_ImageCutter"
 
-		pdf_worker = PDFWorker(ordered_paths, pdf_name)
+		pdf_worker = PDFWorker(ordered_paths, pdf_name, individual_PDFs)
 		pdf_worker.signals.finished.connect(self._on_pdf_success) 
 		pdf_worker.signals.error.connect(self._on_pdf_error) 
 

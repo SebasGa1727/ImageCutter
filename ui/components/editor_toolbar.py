@@ -18,7 +18,7 @@ class EditorToolbar(QtWidgets.QToolBar):
         super().__init__("Herramientas de Edicion", parent)
         #Declaramos las "Shortcuts"
         self.KEY_RESTART_POINTS = "esc"
-        self.KEY_RIGHT_ROTATE = "alt+1"
+        self.KEY_RIGHT_ROTATE = "a"
 
         # llamamos a los metodos privados que brindan la estrucutra y personalizacion
         self._apply_style()

@@ -10,8 +10,8 @@ from utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 class BatchSummaryView(QtWidgets.QWidget):
-    request_continue = QtCore.pyqtSignal(bool, str) # True = Continuar con TH, False = Sin TH 
-    # El str es el nombre del archivo para crear th
+    request_continue = QtCore.pyqtSignal(bool, str, bool) # True = Continuar con TH, False = Sin TH -- El str es el nombre del archivo para crear th -- true crear pdf individuales, false no
+    request_cancel = QtCore.pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -26,7 +26,7 @@ class BatchSummaryView(QtWidgets.QWidget):
         self.main_layout.setSpacing(15)
         self.main_layout.setContentsMargins(20, 20, 20, 20)
         
-        self.setStyleSheet("background-color: #2D2D2D; color: white;")
+        self.setStyleSheet("background-color: #1E1E1E; color: white;")
 
         group_box_style = """
             QGroupBox { 
@@ -115,12 +115,11 @@ class BatchSummaryView(QtWidgets.QWidget):
         self.list_widget.currentItemChanged.connect(self._on_item_selected)
         
         list_layout.addWidget(self.list_widget)
-        right_panel.addWidget(list_group, stretch=3)
         
-        # 2. Caja inferior (Información y Checkbox lado a lado)
+        # Caja inferior (Información y Checkboxes)
         bottom_right_layout = QtWidgets.QHBoxLayout()
         
-        # 2a. Información de imagen (Izquierda de la caja inferior)
+        # Información de imagen (Izquierda de la caja inferior)
         info_group = QtWidgets.QGroupBox("Información de imagen")
         info_group.setStyleSheet(group_box_style)
         info_layout = QtWidgets.QVBoxLayout(info_group)
@@ -132,15 +131,27 @@ class BatchSummaryView(QtWidgets.QWidget):
         for lbl in [self.lbl_dims, self.lbl_dpi, self.lbl_quality]:
             lbl.setStyleSheet("font-weight: bold; font-size: 14px; color: #CFCFCF;")
             info_layout.addWidget(lbl)
-            
-        bottom_right_layout.addWidget(info_group, stretch=1)
         
-        # 2b. Checkbox de confirmación (Derecha de la caja inferior)
-        self.chk_confirm_pdf = QtWidgets.QCheckBox("Este es el orden que quiero en mi PDF")
+        # Checkboxes de confirmación (Derecha de la caja inferior)
+        checkbox_layout = QtWidgets.QVBoxLayout()
+
+        self.chk_confirm_individual_pdf = QtWidgets.QCheckBox("Generar PDF individual por cada imagen")
+        self.chk_confirm_individual_pdf.setStyleSheet("QCheckBox { font-size: 16px; font-weight: bold; color: #F7F7F7; } QCheckBox::indicator { width: 20px; height: 20px; }")
+
+        self.chk_confirm_pdf = QtWidgets.QCheckBox("Aplicar este orden a mi PDF")
         self.chk_confirm_pdf.setStyleSheet("QCheckBox { font-size: 16px; font-weight: bold; color: #F7F7F7; } QCheckBox::indicator { width: 20px; height: 20px; }")
         self.chk_confirm_pdf.toggled.connect(self._toggle_continue_buttons)
-        bottom_right_layout.addWidget(self.chk_confirm_pdf, stretch=1, alignment=QtCore.Qt.AlignmentFlag.AlignCenter)
 
+        # Armado de los checkboxes
+        checkbox_layout.addWidget(self.chk_confirm_individual_pdf, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
+        checkbox_layout.addWidget(self.chk_confirm_pdf, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
+
+        # Armado del panel inferior derecho
+        bottom_right_layout.addWidget(info_group, stretch=1)
+        bottom_right_layout.addLayout(checkbox_layout, stretch=1)
+
+        # Armado del panel derecho
+        right_panel.addWidget(list_group, stretch=3)
         right_panel.addLayout(bottom_right_layout, stretch=1)
         
         # Agregamos todo el bloque derecho al Splitter
@@ -153,7 +164,6 @@ class BatchSummaryView(QtWidgets.QWidget):
         # 3. FOOTER: Botones de Acción
         # ==========================================
         footer_layout = QtWidgets.QHBoxLayout()
-        footer_layout.addStretch()
 
         self.btn_continue_no_th = QtWidgets.QPushButton("Continuar SIN TH")
         self.btn_continue_no_th.setMinimumHeight(45)
@@ -164,20 +174,28 @@ class BatchSummaryView(QtWidgets.QWidget):
 
         self.btn_continue_th = QtWidgets.QPushButton("Continuar con esta TH")
         self.btn_continue_th.setMinimumHeight(45)
-        self.btn_continue_th.setMinimumWidth(200)
+        self.btn_continue_th.setMinimumWidth(170)
         self.btn_continue_th.setStyleSheet("QPushButton { background-color: #0c8ce9; color: white; border-radius: 6px; font-weight: bold; font-size: 15px;} QPushButton:disabled { background-color: #1a4f76; color: #777; }")
         self.btn_continue_th.clicked.connect(lambda: self._confirm_continue_with_th(True))
         self.btn_continue_th.setEnabled(False) 
 
+        self.btn_cancel = QtWidgets.QPushButton("Cancelar")
+        self.btn_cancel.setMinimumHeight(45)
+        self.btn_cancel.setMinimumWidth(120)
+        self.btn_cancel.setStyleSheet("QPushButton { background-color: #D32F2F; color: white; border: 1px solid #B71C1C;border-radius: 6px; font-weight: bold; font-size: 15px} QPushButton:hover { background-color: #F44336;}")
+        self.btn_cancel.clicked.connect(lambda: self.request_cancel.emit(True))
+
+        footer_layout.addWidget(self.btn_cancel)
+        footer_layout.addStretch(1)
         footer_layout.addWidget(self.btn_continue_th)
         footer_layout.addWidget(self.btn_continue_no_th)
+
         self.main_layout.addLayout(footer_layout)
 
     def _toggle_continue_buttons(self, checked: bool):
         """Activa o desactiva los botones dependiendo de la checkbox de confirmación."""
         self.btn_continue_th.setEnabled(checked)
         self.btn_continue_no_th.setEnabled(checked)
-
 
     # --- LÓGICA DE LA VISTA ---
 
@@ -266,13 +284,13 @@ class BatchSummaryView(QtWidgets.QWidget):
             ordered_paths = [self.list_widget.item(i).data(QtCore.Qt.ItemDataRole.UserRole) for i in range(self.list_widget.count())]
             self.chk_confirm_pdf.setChecked(False)
             # Emitimos señal para continuar
-            self.request_continue.emit(with_th, "")
+            self.request_continue.emit(with_th, "", self.chk_confirm_individual_pdf.isChecked())
 
     def _confirm_continue_with_th(self, with_th: bool):
         '''Ordena la lista y emite el mensaje de confirmacion'''
         ordered_paths = [self.list_widget.item(i).data(QtCore.Qt.ItemDataRole.UserRole) for i in range(self.list_widget.count())]
         self.chk_confirm_pdf.setChecked(False)
-        self.request_continue.emit(with_th, self.current_image_path)
+        self.request_continue.emit(with_th, self.current_image_path, self.chk_confirm_individual_pdf.isChecked())
         
        
 # ZONA DE PRUEBAS AISLADA (MOCK ENVIRONMENT)
