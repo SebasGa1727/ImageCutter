@@ -67,8 +67,8 @@ def export_individual_pdfs(image_paths: list[str], output_foldername: str) -> st
     Genera un PDF independiente por cada imagen. 
     Altamente optimizado para RAM usando I/O streaming por archivo.
     '''
-    dpi = int(config_manager.get("export_pdf", "dpi")) or 150
-    quality = int(config_manager.get("export_pdf", "quality")) or 75
+    dpi = int(config_manager.get("export_pdf", "dpi") or 150)
+    quality = int(config_manager.get("export_pdf", "quality") or 75)
     base_dir = config_manager.get("paths", "last_dir")
     
     if not base_dir:

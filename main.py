@@ -39,7 +39,7 @@ class PDFWorker(QRunnable):
 	def run(self):
 		try:
 			# El Hilo de fondo decide qué función matemática llamar
-			if self.individual_pdfs:
+			if self.individual_PDFs:
 				final_path = export_individual_pdfs(self.ordered_paths, self.output_filename)
 			else:
 				final_path = export_to_pdf(self.ordered_paths, self.output_filename)
